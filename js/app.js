@@ -4,7 +4,7 @@
  */
 
 // ========================================
-// المتغيرات العامة
+// المتغيرات العامةش
 // ========================================
 let programsData = [];
 let currentData = null;
@@ -148,20 +148,43 @@ function parseCSVToPrograms(csvText) {
         return [];
     }
     
-    const headers = parseCSVLine(lines[0], delimiter);
-    console.log('📋 الرؤوس:', headers);
-    
+    // محاولة اكتشاف صف العناوين الحقيقي (في حال وجود أسطر عنوان/فارغة قبل البيانات)
+    let headerRowIndex = 0;
+    const maxScan = Math.min(lines.length, 10);
+    for (let i = 0; i < maxScan; i++) {
+        const cols = parseCSVLine(lines[i], delimiter);
+        const norms = cols.map(normalizeHeader);
+        const hasProgram = norms.includes(normalizeHeader('Major_aName')) ||
+                           norms.includes(normalizeHeader('البرنامج')) ||
+                           norms.includes(normalizeHeader('program'));
+        const hasSemester = norms.includes(normalizeHeader('Semester')) ||
+                            norms.includes(normalizeHeader('semester')) ||
+                            norms.includes(normalizeHeader('السنة')) ||
+                            norms.includes(normalizeHeader('الفصل'));
+        if (hasProgram && hasSemester) {
+            headerRowIndex = i;
+            break;
+        }
+    }
+
+    const headers = parseCSVLine(lines[headerRowIndex], delimiter);
+    console.log('📋 الرؤوس (صف ' + headerRowIndex + '):', headers);
+
     const colMap = findColumns(headers);
     console.log('🗺️ خريطة الأعمدة:', colMap);
     
-    if (colMap.program === -1) {
-        console.error('❌ لم يتم العثور على عمود البرنامج');
+    if (colMap.program === -1 || colMap.semester === -1) {
+        console.error('❌ لم يتم العثور على أعمدة أساسية (البرنامج/السنة)');
+        console.error('📋 الرؤوس المستلمة:', headers);
+
+        // ملاحظة توضيحية للمستخدم: غالباً تم نشر ورقة غير (raw_data) أو تم تغيير أسماء الأعمدة
+        alert('⚠️ لم يتم التعرف على أعمدة البرنامج/السنة من Google Sheets.\nتأكد أنك نشرت ورقة: raw_data (البيانات الخام) بصيغة CSV، وأن الصف الأول يحتوي على عناوين الأعمدة.');
         return [];
     }
     
     const programs = {};
     
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = headerRowIndex + 1; i < lines.length; i++) {
         const values = parseCSVLine(lines[i], delimiter);
         if (values.length < 3) continue;
         
@@ -229,6 +252,24 @@ function parseCSVLine(line, delimiter) {
     return result.map(v => v.replace(/^"|"$/g, '').replace(/^\uFEFF/, ''));
 }
 
+function normalizeHeader(h) {
+    return String(h || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^\uFEFF/, '')
+        // إزالة التشكيل العربي
+        .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+        // توحيد بعض الحروف العربية الشائعة
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/ى/g, 'ي')
+        // إزالة المسافات والشرطات والشرطات السفلية
+        .replace(/\s+/g, '')
+        .replace(/[_-]/g, '')
+        // إزالة أغلب علامات الترقيم والإبقاء على (أحرف/أرقام عربية وإنجليزية)
+        .replace(/[^0-9a-z\u0600-\u06FF]/g, '');
+}
+
 function findColumns(headers) {
     const map = {
         dept: -1,
@@ -246,26 +287,68 @@ function findColumns(headers) {
         researchCount: -1,
         citations: -1
     };
-    
-    headers.forEach((h, i) => {
-        const header = h.toLowerCase().trim();
-        
-        if (header.includes('dept') || header.includes('قسم')) map.dept = i;
-        if (header.includes('major') || header.includes('برنامج')) map.program = i;
-        if (header.includes('degree') || header.includes('درجة')) map.degree = i;
-        if (header.includes('semester') || header.includes('فصل') || header.includes('سنة')) map.semester = i;
-        if (header.includes('gender') || header.includes('جنس')) map.gender = i;
-        if (header.includes('join') || header.includes('التحاق')) map.joinSemester = i;
-        if (header.includes('منتظم') || header.includes('طلاب')) map.students = i;
-        if (header.includes('خريج')) map.graduates = i;
-        if (header.includes('مقرر')) map.courseEval = i;
-        if (header.includes('خبرة')) map.expEval = i;
-        if (header.includes('إجمالي') && header.includes('أعضاء')) map.facultyTotal = i;
-        if (header.includes('نشر') && header.includes('أعضاء')) map.facultyPublished = i;
-        if (header.includes('أبحاث') || header.includes('بحث')) map.researchCount = i;
-        if (header.includes('اقتباس')) map.citations = i;
+
+    const N = normalizeHeader;
+    const normHeaders = headers.map(N);
+
+    const candidates = {
+        dept: ['Dept_aName', 'dept', 'القسم', 'القسم الاكاديمي', 'اسم القسم'],
+        program: ['Major_aName', 'major', 'program', 'البرنامج', 'البرنامج الاكاديمي', 'اسم البرنامج', 'التخصص'],
+        degree: ['Degree_aName', 'degree', 'الدرجة', 'الدرجه', 'الدرجة العلمية', 'المرحلة'],
+        semester: ['Semester', 'semester', 'السنة', 'السنه', 'العام', 'الفصل', 'الفصل الدراسي', 'year'],
+        gender: ['Gender_aName', 'gender', 'الجنس', 'نوع'],
+        joinSemester: ['Join_Semester', 'joinsemester', 'join_semester', 'فصل الالتحاق', 'التحاق'],
+        students: ['عدد المنتظمين', 'عدد الطلاب المنتظمين', 'students', 'studentcount', 'منتظم'],
+        graduates: ['عدد الخريجين', 'graduates', 'خريج'],
+        courseEval: ['المتوسط العام لتقييم جودة المقررات', 'تقييم جودة المقررات', 'تقييم المقررات', 'course_eval', 'courseeval'],
+        expEval: ['المتوسط العام لتقييم خبرة البرنامج', 'تقييم خبرة البرنامج', 'experience_eval', 'experienceeval'],
+        facultyTotal: ['العدد الإجمالي للأعضاء', 'إجمالي أعضاء هيئة التدريس', 'faculty_total', 'facultytotal'],
+        facultyPublished: ['عدد الأعضاء الذين نشروا بحثًا', 'عدد الأعضاء الذين نشروا بحثا', 'faculty_published', 'facultypublished'],
+        researchCount: ['عدد الأبحاث المنشورة', 'research_count', 'researchcount'],
+        citations: ['إجمالي الاقتباسات', 'citations']
+    };
+
+    // تطبيع المرشحات
+    Object.keys(candidates).forEach(k => candidates[k] = candidates[k].map(N));
+
+    // 1) مطابقة دقيقة (بدون over-match)
+    Object.keys(candidates).forEach(field => {
+        for (let i = 0; i < normHeaders.length; i++) {
+            if (candidates[field].includes(normHeaders[i])) {
+                map[field] = i;
+                break;
+            }
+        }
     });
-    
+
+    // 2) مطابقة احتياطية (فقط إذا لم تُحدَّد الخانة)
+    normHeaders.forEach((h, i) => {
+        if (map.dept === -1 && (h.includes('dept') || h === N('القسم'))) map.dept = i;
+
+        // ⚠️ مهم: لا نستخدم includes('برنامج') بشكل عام لأنه يطابق "خبرة البرنامج"
+        if (map.program === -1 && (h.includes('major') || h === N('البرنامج') || h.includes('program'))) map.program = i;
+
+        // ⚠️ مهم: لا نستخدم includes('درجة') لأنه قد يطابق أعمدة تقييم (درجة التقييم)
+        if (map.degree === -1 && (h.includes('degree') || h === N('الدرجة') || h === N('الدرجةالعلمية'))) map.degree = i;
+
+        if (map.semester === -1 && (h.includes('semester') || h === N('السنة') || h === N('الفصل') || h.includes('year'))) map.semester = i;
+
+        if (map.gender === -1 && (h.includes('gender') || h === N('الجنس'))) map.gender = i;
+        if (map.joinSemester === -1 && (h.includes('joinsemester') || h.includes('join') || h === N('فصلالالتحاق'))) map.joinSemester = i;
+
+        if (map.students === -1 && (h.includes('students') || h.includes('منتظم'))) map.students = i;
+        if (map.graduates === -1 && (h.includes('graduates') || h.includes('خريج'))) map.graduates = i;
+
+        if (map.courseEval === -1 && (h.includes('courseeval') || (h.includes('مقرر') || h.includes('مقررات')))) map.courseEval = i;
+        if (map.expEval === -1 && (h.includes('experienceeval') || h.includes('خبره'))) map.expEval = i;
+
+        if (map.facultyTotal === -1 && (h.includes('facultytotal') || (h.includes('اجمالي') && h.includes('اعضاء')))) map.facultyTotal = i;
+        if (map.facultyPublished === -1 && (h.includes('facultypublished') || (h.includes('نشر') && h.includes('اعضاء')))) map.facultyPublished = i;
+
+        if (map.researchCount === -1 && (h.includes('researchcount') || h.includes('ابحاث') || h.includes('بحث'))) map.researchCount = i;
+        if (map.citations === -1 && (h.includes('citations') || h.includes('اقتباس'))) map.citations = i;
+    });
+
     return map;
 }
 
