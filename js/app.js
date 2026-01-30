@@ -71,7 +71,7 @@ async function loadData() {
     const statusText = document.getElementById('data-source-text');
     
     try {
-        if (typeof GOOGLE_SHEET_URL !== 'undefined' && GOOGLE_SHEET_URL && GOOGLE_SHEET_URL.trim() !== '') {
+      if (false) {  // تم تعطيل Google Sheets - نستخدم CSV محلي
             statusText.textContent = 'جاري الاتصال بـ Google Sheets...';
             console.log('🔗 محاولة الاتصال بـ:', GOOGLE_SHEET_URL);
             
@@ -112,9 +112,10 @@ async function loadData() {
         statusDot.classList.add('error');
         
         try {
-            console.log('🔄 محاولة تحميل الملف المحلي كاحتياطي...');
-            const response = await fetch('data/programs.json');
-            programsData = await response.json();
+          console.log('📂 تحميل من ملف CSV المحلي...');
+    const response = await fetch('data/data.csv');
+    const csvText = await response.text();
+    programsData = parseCSVToPrograms(csvText);
             statusText.textContent = '⚠️ تم استخدام الملف المحلي (فشل Google Sheets)';
             initializeAllSelects();
         } catch (e) {
