@@ -1,6 +1,9 @@
 /**
  * مؤشرات الأداء - كلية الشريعة والأنظمة
- * يقرأ من ملف data/data.csv
+ * يقرأ مباشرة من ملف بنفس صيغة "القديمة.csv"
+ * - فاصلة منقوطة (;) كفاصل
+ * - يدمج الصفوف المتعددة لنفس البرنامج/السنة
+ * - يأخذ فقط البيانات الإجمالية (All/All)
  */
 
 let programsData = [];
@@ -53,7 +56,7 @@ function shortYear(y) {
 }
 
 // ========================================
-// تحميل البيانات من CSV
+// تحميل البيانات
 // ========================================
 async function loadData() {
     const statusDot = document.getElementById('status-dot');
@@ -65,7 +68,7 @@ async function loadData() {
         const response = await fetch('data/data.csv');
         const csvText = await response.text();
         
-        console.log('📄 تم تحميل CSV، الحجم:', csvText.length);
+        console.log('📄 تم تحميل الملف، الحجم:', csvText.length, 'حرف');
         
         programsData = parseCSV(csvText);
         
@@ -84,74 +87,135 @@ async function loadData() {
 }
 
 // ========================================
-// تحليل CSV
+// تحليل CSV بصيغة "القديمة.csv"
 // ========================================
 function parseCSV(csvText) {
-    const lines = csvText.trim().split('\n');
+    console.log('🔄 بدء تحليل CSV...');
+    
+    // تنظيف وتقسيم
+    const lines = csvText.trim().split('\n').map(l => l.replace(/\r/g, ''));
     if (lines.length < 2) return [];
     
-    // الرؤوس
-    const headers = lines[0].split(',').map(h => h.trim().replace(/^\uFEFF/, ''));
+    // تحديد الفاصل (فاصلة منقوطة أو فاصلة)
+    const firstLine = lines[0];
+    const delimiter = firstLine.includes(';') ? ';' : ',';
+    console.log('📌 الفاصل:', delimiter === ';' ? 'فاصلة منقوطة (;)' : 'فاصلة (,)');
+    
+    // استخراج الرؤوس
+    const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^\uFEFF/, ''));
     console.log('📋 الأعمدة:', headers);
     
-    // فهرس الأعمدة
+    // إيجاد فهرس كل عمود
     const col = {};
     headers.forEach((h, i) => {
-        const key = h.toLowerCase();
-        if (key === 'dept_aname') col.dept = i;
-        if (key === 'major_aname') col.program = i;
-        if (key === 'degree_aname') col.degree = i;
-        if (key === 'semester') col.semester = i;
-        if (key === 'gender_aname') col.gender = i;
-        if (key === 'join_semester') col.join = i;
-        if (key === 'students' || key === 'عدد المنتظمين') col.students = i;
-        if (key === 'graduates' || key === 'عدد الخريجين') col.graduates = i;
-        if (key === 'course_eval' || key.includes('جودة المقررات')) col.courseEval = i;
-        if (key === 'experience_eval' || key.includes('خبرة')) col.expEval = i;
-        if (key === 'faculty_total' || key.includes('إجمالي') && key.includes('أعضاء')) col.facultyTotal = i;
-        if (key === 'faculty_published' || key.includes('نشروا')) col.facultyPub = i;
-        if (key === 'research_count' || key.includes('أبحاث')) col.research = i;
-        if (key === 'citations' || key.includes('اقتباس')) col.citations = i;
+        const header = h.toLowerCase();
+        if (header === 'dept_aname') col.dept = i;
+        if (header === 'major_aname') col.prog = i;
+        if (header === 'degree_aname') col.degree = i;
+        if (header === 'semester') col.semester = i;
+        if (header === 'gender_aname') col.gender = i;
+        if (header === 'join_semester') col.join = i;
+        if (header === 'عدد المنتظمين') col.students = i;
+        if (header === 'عدد الخريجين') col.graduates = i;
+        if (header === 'المتوسط العام لتقييم جودة المقررات') col.courseEval = i;
+        if (header === 'المتوسط العام لتقييم خبرة البرنامج') col.expEval = i;
+        if (header === 'العدد الإجمالي للأعضاء') col.facultyTotal = i;
+        if (header === 'عدد الأعضاء الذين نشروا بحثًا') col.facultyPub = i;
+        if (header === 'عدد الأبحاث المنشورة') col.research = i;
+        if (header === 'إجمالي الاقتباسات') col.citations = i;
     });
     
     console.log('🔢 فهرس الأعمدة:', col);
     
-    // معالجة البيانات
-    const programs = {};
+    // ═══════════════════════════════════════════════════════════
+    // دمج البيانات المتعددة لنفس البرنامج/السنة
+    // ═══════════════════════════════════════════════════════════
+    const merged = {};
     
     for (let i = 1; i < lines.length; i++) {
-        const vals = lines[i].split(',').map(v => v.trim());
+        const vals = lines[i].split(delimiter).map(v => v.trim());
         
-        const prog = vals[col.program] || '';
+        const prog = vals[col.prog] || '';
         const degree = vals[col.degree] || '';
         const semester = vals[col.semester] || '';
+        const gender = vals[col.gender] || '';
+        const joinSem = vals[col.join] || '';
         
+        // ✅ نأخذ فقط الصفوف الإجمالية (Gender=All AND Join_Semester=All)
+        if (gender !== 'All' || joinSem !== 'All') continue;
+        
+        // تجاهل الصفوف بدون برنامج أو سنة
         if (!prog || !semester) continue;
         
-        const key = prog + '|' + degree;
-        if (!programs[key]) {
-            programs[key] = {
-                name: prog,
-                degree: degree,
+        const key = `${prog}|${degree}|${shortYear(semester)}`;
+        
+        // إنشاء السجل إذا لم يكن موجوداً
+        if (!merged[key]) {
+            merged[key] = {
                 dept: vals[col.dept] || '',
+                prog: prog,
+                degree: degree,
+                semester: shortYear(semester),
+                students: '',
+                graduates: '',
+                course_eval: '',
+                experience_eval: '',
+                faculty_total: '',
+                faculty_published: '',
+                research_count: '',
+                citations: ''
+            };
+        }
+        
+        // ✅ دمج البيانات (قد تكون موزعة على عدة صفوف)
+        const d = merged[key];
+        
+        if (col.students !== undefined && vals[col.students]) d.students = vals[col.students];
+        if (col.graduates !== undefined && vals[col.graduates]) d.graduates = vals[col.graduates];
+        if (col.courseEval !== undefined && vals[col.courseEval]) d.course_eval = vals[col.courseEval];
+        if (col.expEval !== undefined && vals[col.expEval]) d.experience_eval = vals[col.expEval];
+        if (col.facultyTotal !== undefined && vals[col.facultyTotal]) d.faculty_total = vals[col.facultyTotal];
+        if (col.facultyPub !== undefined && vals[col.facultyPub]) d.faculty_published = vals[col.facultyPub];
+        if (col.research !== undefined && vals[col.research]) d.research_count = vals[col.research];
+        if (col.citations !== undefined && vals[col.citations]) d.citations = vals[col.citations];
+    }
+    
+    console.log('📊 السجلات المدمجة:', Object.keys(merged).length);
+    
+    // ═══════════════════════════════════════════════════════════
+    // تحويل إلى هيكل البرامج
+    // ═══════════════════════════════════════════════════════════
+    const programs = {};
+    
+    for (const key in merged) {
+        const d = merged[key];
+        const progKey = `${d.prog}|${d.degree}`;
+        
+        if (!programs[progKey]) {
+            programs[progKey] = {
+                name: d.prog,
+                degree: d.degree,
+                dept: d.dept,
                 years: {}
             };
         }
         
-        const yr = shortYear(semester);
-        programs[key].years[yr] = {
-            students: vals[col.students] || '',
-            graduates: vals[col.graduates] || '',
-            course_eval: vals[col.courseEval] || '',
-            experience_eval: vals[col.expEval] || '',
-            faculty_total: vals[col.facultyTotal] || '',
-            faculty_published: vals[col.facultyPub] || '',
-            research_count: vals[col.research] || '',
-            citations: vals[col.citations] || ''
+        programs[progKey].years[d.semester] = {
+            students: d.students,
+            graduates: d.graduates,
+            course_eval: d.course_eval,
+            experience_eval: d.experience_eval,
+            faculty_total: d.faculty_total,
+            faculty_published: d.faculty_published,
+            research_count: d.research_count,
+            citations: d.citations
         };
     }
     
-    return Object.values(programs);
+    const result = Object.values(programs);
+    console.log('✅ البرامج النهائية:', result.length);
+    
+    return result;
 }
 
 // ========================================
@@ -185,7 +249,7 @@ function calculateIndicators(raw) {
     ind.patents = null;
     
     // ═══════════════════════════════════════
-    // المؤشرات المحسوبة
+    // المؤشرات المحسوبة تلقائياً
     // ═══════════════════════════════════════
     
     // نسبة الطلاب : هيئة التدريس
@@ -589,3 +653,11 @@ function updateCompareBtn() {
     
     document.getElementById('compare-btn').disabled = !valid;
 }
+
+// ========================================
+// للتصحيح
+// ========================================
+window.debugData = () => {
+    console.log('📊 البرامج:', programsData);
+    console.log('📊 الحالي:', currentData);
+};
