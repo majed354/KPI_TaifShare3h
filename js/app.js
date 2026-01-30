@@ -1,30 +1,29 @@
 /**
  * مؤشرات الأداء - كلية الشريعة والأنظمة
- * نسخة مصححة مع دعم Google Sheets
+ * يقرأ من ملف data/data.csv
  */
 
-// ========================================
-// المتغيرات العامة
-// ========================================
 let programsData = [];
 let currentData = null;
 let compareData = { item1: null, item2: null, title1: '', title2: '' };
 
-// تعريف المؤشرات
+// ========================================
+// المؤشرات الـ 13
+// ========================================
 const INDICATORS = [
     { id: 1, name: "تقويم الطالب لجودة خبرات التعلم", unit: "درجة", key: "experience_eval", numeric: true },
     { id: 2, name: "تقييم الطالب لجودة المقررات", unit: "درجة", key: "course_eval", numeric: true },
-    { id: 3, name: "معدّل التخرج بالوقت المحدد", unit: "%", key: "graduation_rate" },
-    { id: 4, name: "معدّل استبقاء طلاب السنة الأولى", unit: "%", key: "retention_rate" },
-    { id: 5, name: "مستوى أداء الطالب", unit: "%", key: "student_performance" },
-    { id: 6, name: "توظيف الخريجين", unit: "%", key: "employment_rate" },
-    { id: 7, name: "تقويم جهات التوظيف", unit: "درجة", key: "employer_eval" },
+    { id: 3, name: "معدّل التخرج بالوقت المحدد", unit: "%", key: "graduation_rate", numeric: true },
+    { id: 4, name: "معدّل استبقاء طلاب السنة الأولى", unit: "%", key: "retention_rate", numeric: true },
+    { id: 5, name: "مستوى أداء الطالب", unit: "%", key: "student_performance", numeric: true },
+    { id: 6, name: "توظيف الخريجين", unit: "%", key: "employment_rate", numeric: true },
+    { id: 7, name: "تقويم جهات التوظيف", unit: "درجة", key: "employer_eval", numeric: true },
     { id: 8, name: "نسبة الطلاب/هيئة التدريس", unit: "نسبة", key: "student_faculty_ratio" },
     { id: 9, name: "نسبة النشر العلمي", unit: "%", key: "publication_pct", numeric: true },
     { id: 10, name: "البحوث/عضو هيئة تدريس", unit: "بحث", key: "research_per_faculty", numeric: true },
     { id: 11, name: "الاقتباسات/عضو هيئة تدريس", unit: "اقتباس", key: "citations_per_faculty", numeric: true },
-    { id: 12, name: "نسبة نشر طلاب الدراسات العليا", unit: "%", key: "student_publication", gradOnly: true },
-    { id: 13, name: "براءات الاختراع", unit: "براءة", key: "patents", gradOnly: true },
+    { id: 12, name: "نسبة نشر طلاب الدراسات العليا", unit: "%", key: "student_publication", numeric: true, gradOnly: true },
+    { id: 13, name: "براءات الاختراع", unit: "براءة", key: "patents", numeric: true, gradOnly: true },
 ];
 
 const RAW_DATA_LABELS = {
@@ -39,450 +38,303 @@ const RAW_DATA_LABELS = {
 };
 
 // ========================================
-// دالة تحويل السنة: 46 → 1446
+// تحويل السنة: 46 → 1446
 // ========================================
-function formatYear(semester) {
-    if (!semester) return '';
-    let num = parseFloat(semester);
-    if (isNaN(num)) return semester;
-    num = Math.floor(num);
-    if (num < 100) {
-        return '14' + String(num).padStart(2, '0');
-    }
-    return String(num);
+function formatYear(y) {
+    if (!y) return '';
+    let n = Math.floor(parseFloat(y));
+    return n < 100 ? '14' + String(n).padStart(2, '0') : String(n);
 }
 
-function getShortYear(semester) {
-    if (!semester) return '';
-    let num = parseFloat(semester);
-    if (isNaN(num)) return semester;
-    num = Math.floor(num);
-    if (num >= 1400) {
-        return String(num).slice(-2);
-    }
-    return String(num);
+function shortYear(y) {
+    if (!y) return '';
+    let n = Math.floor(parseFloat(y));
+    return n >= 1400 ? String(n).slice(-2) : String(n);
 }
 
 // ========================================
-// تحميل البيانات
+// تحميل البيانات من CSV
 // ========================================
 async function loadData() {
     const statusDot = document.getElementById('status-dot');
     const statusText = document.getElementById('data-source-text');
     
     try {
-      if (false) {  // تم تعطيل Google Sheets - نستخدم CSV محلي
-            statusText.textContent = 'جاري الاتصال بـ Google Sheets...';
-            console.log('🔗 محاولة الاتصال بـ:', GOOGLE_SHEET_URL);
-            
-            const response = await fetch(GOOGLE_SHEET_URL);
-            if (!response.ok) {
-                throw new Error('فشل الاتصال: ' + response.status);
-            }
-            
-            const csvText = await response.text();
-            console.log('📄 تم استلام CSV، الحجم:', csvText.length, 'حرف');
-            console.log('📄 أول 500 حرف:', csvText.substring(0, 500));
-            
-            programsData = parseCSVToPrograms(csvText);
-            
-            if (programsData.length === 0) {
-                throw new Error('لم يتم العثور على بيانات في الملف');
-            }
-            
-            statusText.textContent = '✓ متصل بـ Google Sheets (' + programsData.length + ' برنامج)';
-            statusDot.classList.add('connected');
-            
-        } else {
-            console.log('📂 تحميل من الملف المحلي...');
-            const response = await fetch('data/programs.json');
-            programsData = await response.json();
-            statusText.textContent = '✓ البيانات من ملف محلي (' + programsData.length + ' برنامج)';
-            statusDot.classList.add('connected');
-        }
+        statusText.textContent = 'جاري التحميل...';
         
-        console.log('✅ تم تحميل', programsData.length, 'برنامج');
-        console.log('📊 البرامج:', programsData.map(p => p.name));
+        const response = await fetch('data/data.csv');
+        const csvText = await response.text();
         
-        initializeAllSelects();
+        console.log('📄 تم تحميل CSV، الحجم:', csvText.length);
+        
+        programsData = parseCSV(csvText);
+        
+        statusText.textContent = '✓ تم تحميل ' + programsData.length + ' برنامج';
+        statusDot.classList.add('connected');
+        
+        console.log('✅ البرامج:', programsData.map(p => p.name + ' (' + p.degree + ')'));
+        
+        initSelects();
         
     } catch (error) {
         console.error('❌ خطأ:', error);
-        statusText.textContent = '✗ خطأ: ' + error.message;
+        statusText.textContent = '✗ خطأ في التحميل';
         statusDot.classList.add('error');
-        
-        try {
-          console.log('📂 تحميل من ملف CSV المحلي...');
-    const response = await fetch('data/data.csv');
-    const csvText = await response.text();
-    programsData = parseCSVToPrograms(csvText);
-            statusText.textContent = '⚠️ تم استخدام الملف المحلي (فشل Google Sheets)';
-            initializeAllSelects();
-        } catch (e) {
-            console.error('❌ فشل تحميل الملف المحلي أيضاً:', e);
-        }
     }
 }
 
 // ========================================
-// تحويل CSV إلى JSON
+// تحليل CSV
 // ========================================
-function parseCSVToPrograms(csvText) {
-    console.log('🔄 بدء تحليل CSV...');
+function parseCSV(csvText) {
+    const lines = csvText.trim().split('\n');
+    if (lines.length < 2) return [];
     
-    csvText = csvText.trim();
+    // الرؤوس
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^\uFEFF/, ''));
+    console.log('📋 الأعمدة:', headers);
     
-    const firstLine = csvText.split('\n')[0];
-    let delimiter = ',';
-    if (firstLine.includes(';') && !firstLine.includes(',')) {
-        delimiter = ';';
-    } else if (firstLine.split(';').length > firstLine.split(',').length) {
-        delimiter = ';';
-    }
-    console.log('📌 الفاصل المستخدم:', delimiter === ',' ? 'فاصلة (,)' : 'فاصلة منقوطة (;)');
+    // فهرس الأعمدة
+    const col = {};
+    headers.forEach((h, i) => {
+        const key = h.toLowerCase();
+        if (key === 'dept_aname') col.dept = i;
+        if (key === 'major_aname') col.program = i;
+        if (key === 'degree_aname') col.degree = i;
+        if (key === 'semester') col.semester = i;
+        if (key === 'gender_aname') col.gender = i;
+        if (key === 'join_semester') col.join = i;
+        if (key === 'students' || key === 'عدد المنتظمين') col.students = i;
+        if (key === 'graduates' || key === 'عدد الخريجين') col.graduates = i;
+        if (key === 'course_eval' || key.includes('جودة المقررات')) col.courseEval = i;
+        if (key === 'experience_eval' || key.includes('خبرة')) col.expEval = i;
+        if (key === 'faculty_total' || key.includes('إجمالي') && key.includes('أعضاء')) col.facultyTotal = i;
+        if (key === 'faculty_published' || key.includes('نشروا')) col.facultyPub = i;
+        if (key === 'research_count' || key.includes('أبحاث')) col.research = i;
+        if (key === 'citations' || key.includes('اقتباس')) col.citations = i;
+    });
     
-    const lines = csvText.split('\n').filter(l => l.trim());
-    console.log('📝 عدد الأسطر:', lines.length);
+    console.log('🔢 فهرس الأعمدة:', col);
     
-    if (lines.length < 2) {
-        console.error('❌ لا توجد بيانات كافية');
-        return [];
-    }
-    
-    const headers = parseCSVLine(lines[0], delimiter);
-    console.log('📋 الرؤوس:', headers);
-    
-    const colMap = findColumns(headers);
-    console.log('🗺️ خريطة الأعمدة:', colMap);
-    
-    if (colMap.program === -1) {
-        console.error('❌ لم يتم العثور على عمود البرنامج');
-        return [];
-    }
-    
+    // معالجة البيانات
     const programs = {};
     
     for (let i = 1; i < lines.length; i++) {
-        const values = parseCSVLine(lines[i], delimiter);
-        if (values.length < 3) continue;
+        const vals = lines[i].split(',').map(v => v.trim());
         
-        const prog = values[colMap.program]?.trim();
-        const degree = colMap.degree !== -1 ? values[colMap.degree]?.trim() : '';
-        const semester = colMap.semester !== -1 ? values[colMap.semester]?.trim() : '';
+        const prog = vals[col.program] || '';
+        const degree = vals[col.degree] || '';
+        const semester = vals[col.semester] || '';
         
         if (!prog || !semester) continue;
         
-        const key = `${prog}|${degree}`;
+        const key = prog + '|' + degree;
         if (!programs[key]) {
             programs[key] = {
                 name: prog,
                 degree: degree,
-                dept: colMap.dept !== -1 ? values[colMap.dept]?.trim() : '',
+                dept: vals[col.dept] || '',
                 years: {}
             };
         }
         
-        const shortYear = getShortYear(semester);
-        if (!programs[key].years[shortYear]) {
-            programs[key].years[shortYear] = {};
-        }
-        
-        const gender = colMap.gender !== -1 ? (values[colMap.gender]?.trim() || 'All') : 'All';
-        const joinSem = colMap.joinSemester !== -1 ? (values[colMap.joinSemester]?.trim() || 'All') : 'All';
-        const filterKey = `${gender}_${joinSem}`;
-        
-        programs[key].years[shortYear][filterKey] = {
-            students: colMap.students !== -1 ? cleanNumber(values[colMap.students]) : '',
-            graduates: colMap.graduates !== -1 ? cleanNumber(values[colMap.graduates]) : '',
-            course_eval: colMap.courseEval !== -1 ? cleanNumber(values[colMap.courseEval]) : '',
-            experience_eval: colMap.expEval !== -1 ? cleanNumber(values[colMap.expEval]) : '',
-            faculty_total: colMap.facultyTotal !== -1 ? cleanNumber(values[colMap.facultyTotal]) : '',
-            faculty_published: colMap.facultyPublished !== -1 ? cleanNumber(values[colMap.facultyPublished]) : '',
-            research_count: colMap.researchCount !== -1 ? cleanNumber(values[colMap.researchCount]) : '',
-            citations: colMap.citations !== -1 ? cleanNumber(values[colMap.citations]) : '',
+        const yr = shortYear(semester);
+        programs[key].years[yr] = {
+            students: vals[col.students] || '',
+            graduates: vals[col.graduates] || '',
+            course_eval: vals[col.courseEval] || '',
+            experience_eval: vals[col.expEval] || '',
+            faculty_total: vals[col.facultyTotal] || '',
+            faculty_published: vals[col.facultyPub] || '',
+            research_count: vals[col.research] || '',
+            citations: vals[col.citations] || ''
         };
     }
     
-    const result = Object.values(programs);
-    console.log('✅ تم تحليل', result.length, 'برنامج');
-    return result;
-}
-
-function parseCSVLine(line, delimiter) {
-    const result = [];
-    let current = '';
-    let inQuotes = false;
-    
-    for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        
-        if (char === '"') {
-            inQuotes = !inQuotes;
-        } else if (char === delimiter && !inQuotes) {
-            result.push(current.trim());
-            current = '';
-        } else {
-            current += char;
-        }
-    }
-    result.push(current.trim());
-    
-    return result.map(v => v.replace(/^"|"$/g, '').replace(/^\uFEFF/, ''));
-}
-
-function findColumns(headers) {
-    const map = {
-        dept: -1,
-        program: -1,
-        degree: -1,
-        semester: -1,
-        gender: -1,
-        joinSemester: -1,
-        students: -1,
-        graduates: -1,
-        courseEval: -1,
-        expEval: -1,
-        facultyTotal: -1,
-        facultyPublished: -1,
-        researchCount: -1,
-        citations: -1
-    };
-    
-    headers.forEach((h, i) => {
-        const header = h.toLowerCase().trim();
-        
-        // أعمدة إنجليزية (من Google Sheets)
-        if (header === 'dept_aname') map.dept = i;
-        if (header === 'major_aname') map.program = i;
-        if (header === 'degree_aname') map.degree = i;
-        if (header === 'semester') map.semester = i;
-        if (header === 'gender_aname') map.gender = i;
-        if (header === 'join_semester') map.joinSemester = i;
-        
-        // أعمدة عربية
-        if (header === 'عدد المنتظمين') map.students = i;
-        if (header === 'عدد الخريجين') map.graduates = i;
-        if (header === 'المتوسط العام لتقييم جودة المقررات') map.courseEval = i;
-        if (header === 'المتوسط العام لتقييم خبرة البرنامج') map.expEval = i;
-        if (header === 'العدد الإجمالي للأعضاء') map.facultyTotal = i;
-        if (header === 'عدد الأعضاء الذين نشروا بحثًا') map.facultyPublished = i;
-        if (header === 'عدد الأبحاث المنشورة') map.researchCount = i;
-        if (header === 'إجمالي الاقتباسات') map.citations = i;
-    });
-    
-    console.log('🗺️ خريطة الأعمدة:', map);
-    return map;
-}
-function cleanNumber(value) {
-    if (!value) return '';
-    const str = String(value).trim();
-    if (str === '' || str === 'NaN' || str === 'undefined') return '';
-    return str;
+    return Object.values(programs);
 }
 
 // ========================================
-// تهيئة القوائم
+// حساب المؤشرات من البيانات الخام
 // ========================================
-function initializeAllSelects() {
-    console.log('🔧 تهيئة القوائم...');
-    populateProgramSelect('program-select');
-    populateProgramSelect('compare-program');
-    populateProgramSelect('compare-prog1');
-    populateProgramSelect('compare-prog2');
-    populateAllYears('compare-common-year');
-}
-
-function populateProgramSelect(selectId) {
-    const select = document.getElementById(selectId);
-    if (!select) return;
+function calculateIndicators(raw) {
+    if (!raw?.data) return {};
     
-    select.innerHTML = '<option value="">-- اختر البرنامج --</option>';
-    
-    programsData.forEach((p, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = `${p.name} (${p.degree})`;
-        select.appendChild(opt);
-    });
-    
-    console.log(`📝 تم ملء ${selectId} بـ ${programsData.length} برنامج`);
-}
-
-function populateYearSelect(selectId, programIndex) {
-    const select = document.getElementById(selectId);
-    const program = programsData[programIndex];
-    
-    select.innerHTML = '<option value="">-- اختر --</option>';
-    
-    if (program?.years) {
-        const years = Object.keys(program.years).sort();
-        years.forEach(y => {
-            const opt = document.createElement('option');
-            opt.value = y;
-            opt.textContent = formatYear(y);
-            select.appendChild(opt);
-        });
-        select.disabled = false;
-        console.log(`📅 السنوات المتاحة لـ ${program.name}:`, years.map(y => formatYear(y)));
-    } else {
-        select.disabled = true;
-    }
-}
-
-function populateAllYears(selectId) {
-    const select = document.getElementById(selectId);
-    if (!select) return;
-    
-    const allYears = new Set();
-    programsData.forEach(p => Object.keys(p.years || {}).forEach(y => allYears.add(y)));
-    
-    select.innerHTML = '<option value="">-- اختر السنة --</option>';
-    [...allYears].sort().forEach(y => {
-        const opt = document.createElement('option');
-        opt.value = y;
-        opt.textContent = formatYear(y);
-        select.appendChild(opt);
-    });
-}
-
-function populateProgramsWithYear(selectId, year) {
-    const select = document.getElementById(selectId);
-    select.innerHTML = '<option value="">-- اختر --</option>';
-    
-    programsData.forEach((p, i) => {
-        if (p.years && p.years[year]) {
-            const opt = document.createElement('option');
-            opt.value = i;
-            opt.textContent = `${p.name} (${p.degree})`;
-            select.appendChild(opt);
-        }
-    });
-    select.disabled = false;
-}
-
-// ========================================
-// الحصول على البيانات وحساب المؤشرات
-// ========================================
-function getData(programIndex, year) {
-    const program = programsData[programIndex];
-    if (!program?.years?.[year]) {
-        console.log('❌ لا توجد بيانات للبرنامج', programIndex, 'السنة', year);
-        return null;
-    }
-    
-    const yearData = program.years[year];
-    let data = yearData["All_All"] || yearData["All_all"];
-    
-    if (!data) {
-        for (const k of Object.keys(yearData)) {
-            if (k.startsWith("All_")) { 
-                data = yearData[k]; 
-                break; 
-            }
-        }
-    }
-    
-    if (!data && Object.keys(yearData).length > 0) {
-        data = yearData[Object.keys(yearData)[0]];
-    }
-    
-    console.log('📊 بيانات', program.name, 'سنة', year, ':', data);
-    return { program, year, data };
-}
-
-function calculateIndicators(rawData) {
-    if (!rawData?.data) return {};
-    const d = rawData.data;
+    const d = raw.data;
     const ind = {};
     
-    ind.experience_eval = parseFloat(d.experience_eval) || null;
-    ind.course_eval = parseFloat(d.course_eval) || null;
-    ind.graduation_rate = null;
-    ind.retention_rate = null;
-    ind.student_performance = null;
-    ind.employment_rate = null;
-    ind.employer_eval = null;
-    
+    // البيانات الأساسية
     const students = parseFloat(d.students) || 0;
+    const graduates = parseFloat(d.graduates) || 0;
     const faculty = parseFloat(d.faculty_total) || 0;
     const published = parseFloat(d.faculty_published) || 0;
     const research = parseFloat(d.research_count) || 0;
     const citations = parseFloat(d.citations) || 0;
     
-    ind.student_faculty_ratio = (faculty > 0 && students > 0) ? `1:${Math.round(students/faculty)}` : null;
-    ind.publication_pct = (faculty > 0 && published > 0) ? ((published/faculty)*100).toFixed(1) : null;
-    ind.research_per_faculty = (faculty > 0 && research > 0) ? (research/faculty).toFixed(2) : null;
-    ind.citations_per_faculty = (faculty > 0 && citations > 0) ? (citations/faculty).toFixed(1) : null;
+    // المؤشرات المباشرة (من الاستبيانات)
+    ind.experience_eval = d.experience_eval ? parseFloat(d.experience_eval).toFixed(2) : null;
+    ind.course_eval = d.course_eval ? parseFloat(d.course_eval).toFixed(2) : null;
+    
+    // المؤشرات غير المتوفرة حالياً
+    ind.graduation_rate = null;
+    ind.retention_rate = null;
+    ind.student_performance = null;
+    ind.employment_rate = null;
+    ind.employer_eval = null;
     ind.student_publication = null;
     ind.patents = null;
+    
+    // ═══════════════════════════════════════
+    // المؤشرات المحسوبة
+    // ═══════════════════════════════════════
+    
+    // نسبة الطلاب : هيئة التدريس
+    if (faculty > 0 && students > 0) {
+        ind.student_faculty_ratio = '1:' + Math.round(students / faculty);
+    } else {
+        ind.student_faculty_ratio = null;
+    }
+    
+    // نسبة النشر العلمي = (الأعضاء الناشرين ÷ إجمالي الأعضاء) × 100
+    if (faculty > 0 && published > 0) {
+        ind.publication_pct = ((published / faculty) * 100).toFixed(1);
+    } else {
+        ind.publication_pct = null;
+    }
+    
+    // البحوث لكل عضو = عدد الأبحاث ÷ عدد الأعضاء
+    if (faculty > 0 && research > 0) {
+        ind.research_per_faculty = (research / faculty).toFixed(2);
+    } else {
+        ind.research_per_faculty = null;
+    }
+    
+    // الاقتباسات لكل عضو = إجمالي الاقتباسات ÷ عدد الأعضاء
+    if (faculty > 0 && citations > 0) {
+        ind.citations_per_faculty = (citations / faculty).toFixed(1);
+    } else {
+        ind.citations_per_faculty = null;
+    }
     
     return ind;
 }
 
 // ========================================
-// العرض الفردي
+// تهيئة القوائم
 // ========================================
+function initSelects() {
+    fillProgramSelect('program-select');
+    fillProgramSelect('compare-program');
+    fillProgramSelect('compare-prog1');
+    fillProgramSelect('compare-prog2');
+    fillAllYears('compare-common-year');
+}
+
+function fillProgramSelect(id) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- اختر البرنامج --</option>';
+    programsData.forEach((p, i) => {
+        sel.innerHTML += `<option value="${i}">${p.name} (${p.degree})</option>`;
+    });
+}
+
+function fillYearSelect(id, progIdx) {
+    const sel = document.getElementById(id);
+    const prog = programsData[progIdx];
+    sel.innerHTML = '<option value="">-- اختر --</option>';
+    if (prog?.years) {
+        Object.keys(prog.years).sort().forEach(y => {
+            sel.innerHTML += `<option value="${y}">${formatYear(y)}</option>`;
+        });
+        sel.disabled = false;
+    }
+}
+
+function fillAllYears(id) {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const years = new Set();
+    programsData.forEach(p => Object.keys(p.years || {}).forEach(y => years.add(y)));
+    sel.innerHTML = '<option value="">-- اختر السنة --</option>';
+    [...years].sort().forEach(y => {
+        sel.innerHTML += `<option value="${y}">${formatYear(y)}</option>`;
+    });
+}
+
+function fillProgramsForYear(id, year) {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">-- اختر --</option>';
+    programsData.forEach((p, i) => {
+        if (p.years?.[year]) {
+            sel.innerHTML += `<option value="${i}">${p.name} (${p.degree})</option>`;
+        }
+    });
+    sel.disabled = false;
+}
+
+// ========================================
+// عرض النتائج
+// ========================================
+function getData(progIdx, year) {
+    const prog = programsData[progIdx];
+    if (!prog?.years?.[year]) return null;
+    return { program: prog, year: year, data: prog.years[year] };
+}
+
 function showSingleResults() {
     const progIdx = document.getElementById('program-select').value;
     const year = document.getElementById('year-select').value;
     
-    console.log('🔍 عرض البرنامج:', progIdx, 'السنة:', year);
+    if (!progIdx || !year) return alert('اختر البرنامج والسنة');
     
-    if (!progIdx || !year) {
-        alert('يرجى اختيار البرنامج والسنة');
-        return;
-    }
+    const raw = getData(parseInt(progIdx), year);
+    if (!raw) return alert('لا توجد بيانات');
     
-    const rawData = getData(parseInt(progIdx), year);
-    if (!rawData) { 
-        alert('لا توجد بيانات لهذا الاختيار'); 
-        return; 
-    }
+    currentData = raw;
+    const ind = calculateIndicators(raw);
     
-    currentData = rawData;
-    const indicators = calculateIndicators(rawData);
+    // عرض المعلومات
+    document.getElementById('degree-badge').textContent = raw.program.degree;
+    document.getElementById('program-name').textContent = raw.program.name;
+    document.getElementById('program-year').textContent = 'السنة: ' + formatYear(year);
     
-    document.getElementById('degree-badge').textContent = rawData.program.degree;
-    document.getElementById('program-name').textContent = rawData.program.name;
-    document.getElementById('program-year').textContent = `السنة: ${formatYear(year)}`;
-    
+    // عرض المؤشرات
     const grid = document.getElementById('indicators-grid');
     grid.innerHTML = '';
     
-    INDICATORS.forEach(ind => {
-        if (ind.gradOnly && !['الماجستير','دكتوراه'].includes(rawData.program.degree)) return;
+    INDICATORS.forEach(indicator => {
+        if (indicator.gradOnly && !['الماجستير', 'دكتوراه'].includes(raw.program.degree)) return;
         
-        const val = indicators[ind.key];
+        const val = ind[indicator.key];
         const hasVal = val !== null && val !== '';
         
-        const card = document.createElement('div');
-        card.className = `indicator-card ${hasVal ? '' : 'no-data'}`;
-        card.setAttribute('data-index', ind.id);
-        card.innerHTML = `
-            <span class="card-number">${ind.id}</span>
-            <h3 class="card-title">${ind.name}</h3>
-            <div class="card-value">${hasVal ? val : 'غير متوفر'}</div>
-            <div class="card-unit">${ind.unit}</div>
+        grid.innerHTML += `
+            <div class="indicator-card ${hasVal ? '' : 'no-data'}" data-index="${indicator.id}">
+                <span class="card-number">${indicator.id}</span>
+                <h3 class="card-title">${indicator.name}</h3>
+                <div class="card-value">${hasVal ? val : 'غير متوفر'}</div>
+                <div class="card-unit">${indicator.unit}</div>
+            </div>
         `;
-        grid.appendChild(card);
     });
     
+    // عرض البيانات الخام
     const dataGrid = document.getElementById('data-grid');
     dataGrid.innerHTML = '';
     
     Object.entries(RAW_DATA_LABELS).forEach(([key, label]) => {
-        const val = rawData.data?.[key];
+        const val = raw.data[key];
         const hasVal = val !== null && val !== undefined && val !== '';
-        
-        const item = document.createElement('div');
-        item.className = 'data-item';
-        item.innerHTML = `
-            <div class="data-label">${label}</div>
-            <div class="data-value ${hasVal ? '' : 'empty'}">${hasVal ? val : '—'}</div>
+        dataGrid.innerHTML += `
+            <div class="data-item">
+                <div class="data-label">${label}</div>
+                <div class="data-value ${hasVal ? '' : 'empty'}">${hasVal ? val : '—'}</div>
+            </div>
         `;
-        dataGrid.appendChild(item);
     });
     
+    // إظهار الأقسام
     document.getElementById('program-info').classList.remove('hidden');
     document.getElementById('indicators-section').classList.remove('hidden');
     document.getElementById('raw-data-section').classList.remove('hidden');
@@ -493,33 +345,24 @@ function showSingleResults() {
 // المقارنة
 // ========================================
 function showCompareResults() {
-    const compareType = document.querySelector('.compare-type-btn.active').dataset.type;
+    const type = document.querySelector('.compare-type-btn.active').dataset.type;
     let data1, data2, title1, title2;
     
-    if (compareType === 'years') {
-        const progIdx = document.getElementById('compare-program').value;
+    if (type === 'years') {
+        const prog = document.getElementById('compare-program').value;
         const y1 = document.getElementById('compare-year1').value;
         const y2 = document.getElementById('compare-year2').value;
+        if (!prog || !y1 || !y2) return alert('اختر جميع الحقول');
         
-        if (!progIdx || !y1 || !y2) { 
-            alert('اختر جميع الحقول'); 
-            return; 
-        }
-        
-        data1 = getData(parseInt(progIdx), y1);
-        data2 = getData(parseInt(progIdx), y2);
+        data1 = getData(parseInt(prog), y1);
+        data2 = getData(parseInt(prog), y2);
         title1 = formatYear(y1);
         title2 = formatYear(y2);
-        
     } else {
         const year = document.getElementById('compare-common-year').value;
         const p1 = document.getElementById('compare-prog1').value;
         const p2 = document.getElementById('compare-prog2').value;
-        
-        if (!year || !p1 || !p2) { 
-            alert('اختر جميع الحقول'); 
-            return; 
-        }
+        if (!year || !p1 || !p2) return alert('اختر جميع الحقول');
         
         data1 = getData(parseInt(p1), year);
         data2 = getData(parseInt(p2), year);
@@ -527,10 +370,7 @@ function showCompareResults() {
         title2 = programsData[p2].name;
     }
     
-    if (!data1 || !data2) { 
-        alert('لا توجد بيانات كافية للمقارنة'); 
-        return; 
-    }
+    if (!data1 || !data2) return alert('لا توجد بيانات كافية');
     
     compareData = { item1: data1, item2: data2, title1, title2 };
     
@@ -543,26 +383,26 @@ function showCompareResults() {
     const tbody = document.getElementById('compare-tbody');
     tbody.innerHTML = '';
     
-    INDICATORS.forEach(ind => {
-        const v1 = ind1[ind.key];
-        const v2 = ind2[ind.key];
+    INDICATORS.forEach(indicator => {
+        const v1 = ind1[indicator.key];
+        const v2 = ind2[indicator.key];
         
         let diffHtml = '<span class="diff-neutral">—</span>';
-        if (ind.numeric && v1 && v2) {
+        if (indicator.numeric && v1 && v2) {
             const diff = parseFloat(v1) - parseFloat(v2);
             const sign = diff > 0 ? '+' : '';
             const cls = diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral';
             diffHtml = `<span class="${cls}">${sign}${diff.toFixed(2)}</span>`;
         }
         
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td>${ind.name}</td>
-            <td class="value-cell">${v1 || '—'}</td>
-            <td class="value-cell">${v2 || '—'}</td>
-            <td>${diffHtml}</td>
+        tbody.innerHTML += `
+            <tr>
+                <td>${indicator.name}</td>
+                <td class="value-cell">${v1 || '—'}</td>
+                <td class="value-cell">${v2 || '—'}</td>
+                <td>${diffHtml}</td>
+            </tr>
         `;
-        tbody.appendChild(row);
     });
     
     document.getElementById('compare-results').classList.remove('hidden');
@@ -570,28 +410,26 @@ function showCompareResults() {
 }
 
 // ========================================
-// التصدير - PDF
+// التصدير
 // ========================================
 function exportToPDF() {
     if (!currentData) return;
-    
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('p', 'mm', 'a4');
     
-    doc.setFont('helvetica');
     doc.setFontSize(16);
     doc.text('KPI Report - ' + currentData.program.name, 105, 20, { align: 'center' });
     doc.setFontSize(12);
     doc.text('Year: ' + formatYear(currentData.year), 105, 30, { align: 'center' });
     
-    const indicators = calculateIndicators(currentData);
-    const tableData = INDICATORS.map(ind => [ind.name, indicators[ind.key] || '-', ind.unit]);
+    const ind = calculateIndicators(currentData);
+    const tableData = INDICATORS.map(i => [i.name, ind[i.key] || '-', i.unit]);
     
     doc.autoTable({
         startY: 40,
         head: [['Indicator', 'Value', 'Unit']],
         body: tableData,
-        styles: { font: 'helvetica', halign: 'center', fontSize: 9 },
+        styles: { halign: 'center', fontSize: 9 },
         headStyles: { fillColor: [13, 79, 79] }
     });
     
@@ -600,63 +438,56 @@ function exportToPDF() {
 
 function exportCompareToPDF() {
     if (!compareData.item1) return;
-    
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF('p', 'mm', 'a4');
     
-    doc.setFont('helvetica');
     doc.setFontSize(14);
-    doc.text('KPI Comparison Report', 105, 20, { align: 'center' });
+    doc.text('KPI Comparison', 105, 20, { align: 'center' });
     
     const ind1 = calculateIndicators(compareData.item1);
     const ind2 = calculateIndicators(compareData.item2);
-    const tableData = INDICATORS.map(ind => [ind.name, ind1[ind.key] || '-', ind2[ind.key] || '-']);
+    const tableData = INDICATORS.map(i => [i.name, ind1[i.key] || '-', ind2[i.key] || '-']);
     
     doc.autoTable({
         startY: 35,
         head: [['Indicator', compareData.title1, compareData.title2]],
         body: tableData,
-        styles: { font: 'helvetica', halign: 'center', fontSize: 9 },
+        styles: { halign: 'center', fontSize: 9 },
         headStyles: { fillColor: [13, 79, 79] }
     });
     
     doc.save('KPI-Comparison.pdf');
 }
 
-// ========================================
-// التصدير - Excel
-// ========================================
 function exportToExcel() {
     if (!currentData) return;
-    
-    const indicators = calculateIndicators(currentData);
+    const ind = calculateIndicators(currentData);
     
     const data = [
         ['تقرير مؤشرات الأداء'],
-        [`البرنامج: ${currentData.program.name}`],
-        [`السنة: ${formatYear(currentData.year)}`],
+        ['البرنامج: ' + currentData.program.name],
+        ['السنة: ' + formatYear(currentData.year)],
         [],
         ['المؤشر', 'القيمة', 'الوحدة'],
-        ...INDICATORS.map(ind => [ind.name, indicators[ind.key] || '—', ind.unit])
+        ...INDICATORS.map(i => [i.name, ind[i.key] || '—', i.unit])
     ];
     
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'المؤشرات');
-    XLSX.writeFile(wb, `مؤشرات-${currentData.program.name}-${formatYear(currentData.year)}.xlsx`);
+    XLSX.writeFile(wb, `مؤشرات-${formatYear(currentData.year)}.xlsx`);
 }
 
 function exportCompareToExcel() {
     if (!compareData.item1) return;
-    
     const ind1 = calculateIndicators(compareData.item1);
     const ind2 = calculateIndicators(compareData.item2);
     
     const data = [
-        ['تقرير مقارنة المؤشرات'],
+        ['مقارنة المؤشرات'],
         [],
         ['المؤشر', compareData.title1, compareData.title2],
-        ...INDICATORS.map(ind => [ind.name, ind1[ind.key] || '—', ind2[ind.key] || '—'])
+        ...INDICATORS.map(i => [i.name, ind1[i.key] || '—', ind2[i.key] || '—'])
     ];
     
     const ws = XLSX.utils.aoa_to_sheet(data);
@@ -669,24 +500,24 @@ function exportCompareToExcel() {
 // مستمعات الأحداث
 // ========================================
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 بدء التطبيق...');
     loadData();
     
+    // التنقل
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.view-section').forEach(v => v.classList.add('hidden'));
             btn.classList.add('active');
-            document.getElementById(`${btn.dataset.view}-view`).classList.remove('hidden');
+            document.getElementById(btn.dataset.view + '-view').classList.remove('hidden');
         });
     });
     
+    // العرض الفردي
     document.getElementById('program-select').addEventListener('change', e => {
         if (e.target.value) {
-            populateYearSelect('year-select', parseInt(e.target.value));
+            fillYearSelect('year-select', parseInt(e.target.value));
         } else {
             document.getElementById('year-select').disabled = true;
-            document.getElementById('year-select').innerHTML = '<option value="">-- اختر السنة --</option>';
         }
         document.getElementById('show-btn').disabled = true;
         ['program-info', 'indicators-section', 'raw-data-section'].forEach(id => 
@@ -694,12 +525,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     document.getElementById('year-select').addEventListener('change', e => {
-        const prog = document.getElementById('program-select').value;
-        document.getElementById('show-btn').disabled = !e.target.value || !prog;
+        document.getElementById('show-btn').disabled = !e.target.value;
     });
     
     document.getElementById('show-btn').addEventListener('click', showSingleResults);
     
+    // نوع المقارنة
     document.querySelectorAll('.compare-type-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.compare-type-btn').forEach(b => b.classList.remove('active'));
@@ -711,13 +542,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
     
+    // مقارنة السنوات
     document.getElementById('compare-program').addEventListener('change', e => {
         if (e.target.value) {
-            populateYearSelect('compare-year1', parseInt(e.target.value));
-            populateYearSelect('compare-year2', parseInt(e.target.value));
-        } else {
-            document.getElementById('compare-year1').disabled = true;
-            document.getElementById('compare-year2').disabled = true;
+            fillYearSelect('compare-year1', parseInt(e.target.value));
+            fillYearSelect('compare-year2', parseInt(e.target.value));
         }
         updateCompareBtn();
     });
@@ -726,13 +555,11 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(id).addEventListener('change', updateCompareBtn);
     });
     
+    // مقارنة البرامج
     document.getElementById('compare-common-year').addEventListener('change', e => {
         if (e.target.value) {
-            populateProgramsWithYear('compare-prog1', e.target.value);
-            populateProgramsWithYear('compare-prog2', e.target.value);
-        } else {
-            document.getElementById('compare-prog1').disabled = true;
-            document.getElementById('compare-prog2').disabled = true;
+            fillProgramsForYear('compare-prog1', e.target.value);
+            fillProgramsForYear('compare-prog2', e.target.value);
         }
         updateCompareBtn();
     });
@@ -762,9 +589,3 @@ function updateCompareBtn() {
     
     document.getElementById('compare-btn').disabled = !valid;
 }
-
-// للتصحيح
-window.debugData = () => {
-    console.log('📊 البيانات:', programsData);
-    console.log('📊 الحالية:', currentData);
-};
