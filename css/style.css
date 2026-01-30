@@ -1,5 +1,6 @@
 /* ========================================
    مؤشرات الأداء - كلية الشريعة
+   الإصدار 2.0
    ======================================== */
 
 :root {
@@ -75,7 +76,7 @@ body {
 .logo-text p { font-size: 0.85rem; color: rgba(255,255,255,0.8); }
 
 /* التنقل */
-.header-nav { display: flex; gap: 0.5rem; }
+.header-nav { display: flex; gap: 0.5rem; align-items: center; }
 .nav-btn {
     padding: 0.6rem 1.25rem;
     font-size: 0.95rem;
@@ -90,6 +91,17 @@ body {
 }
 .nav-btn:hover { background: rgba(255,255,255,0.2); color: white; }
 .nav-btn.active { background: var(--secondary); color: var(--primary-dark); }
+.nav-btn.refresh-btn {
+    padding: 0.6rem 0.8rem;
+    font-size: 1.1rem;
+}
+.nav-btn.refresh-btn:hover {
+    animation: spin 0.5s ease;
+}
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 
 /* المحتوى */
 .main-content { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
@@ -189,13 +201,162 @@ body {
 .export-btn:hover { background: rgba(255,255,255,0.9); transform: translateY(-2px); }
 .export-btn svg { width: 16px; height: 16px; }
 
+/* ========================================
+   قسم الإحصائيات التفصيلية (جديد)
+   ======================================== */
+.details-section {
+    margin-bottom: 2rem;
+}
+
+.section-subtitle {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-bottom: 1.5rem;
+    margin-top: -0.5rem;
+}
+
+.details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+.detail-card {
+    background: white;
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    box-shadow: var(--shadow-sm);
+    border-right: 4px solid var(--primary);
+    transition: all 0.3s;
+    animation: slideIn 0.4s ease forwards;
+    opacity: 0;
+}
+
+.detail-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md);
+}
+
+.detail-icon {
+    font-size: 1.8rem;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f8fafc;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.detail-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.detail-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+    line-height: 1.3;
+}
+
+.detail-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    font-family: 'Readex Pro', sans-serif;
+    line-height: 1.2;
+}
+
+.detail-unit {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* ألوان البطاقات التفصيلية */
+.detail-primary { border-right-color: var(--primary); }
+.detail-primary .detail-value { color: var(--primary); }
+
+.detail-blue { border-right-color: #3b82f6; }
+.detail-blue .detail-value { color: #3b82f6; }
+.detail-blue .detail-icon { background: #eff6ff; }
+
+.detail-pink { border-right-color: #ec4899; }
+.detail-pink .detail-value { color: #ec4899; }
+.detail-pink .detail-icon { background: #fdf2f8; }
+
+.detail-green { border-right-color: #10b981; }
+.detail-green .detail-value { color: #10b981; }
+.detail-green .detail-icon { background: #ecfdf5; }
+
+.detail-orange { border-right-color: #f97316; }
+.detail-orange .detail-value { color: #f97316; }
+.detail-orange .detail-icon { background: #fff7ed; }
+
+.detail-success { border-right-color: #22c55e; }
+.detail-success .detail-value { color: #22c55e; }
+.detail-success .detail-icon { background: #f0fdf4; }
+
+.detail-purple { border-right-color: #8b5cf6; }
+.detail-purple .detail-value { color: #8b5cf6; }
+.detail-purple .detail-icon { background: #f5f3ff; }
+
+.detail-indigo { border-right-color: #6366f1; }
+.detail-indigo .detail-value { color: #6366f1; }
+.detail-indigo .detail-icon { background: #eef2ff; }
+
+.detail-teal { border-right-color: #14b8a6; }
+.detail-teal .detail-value { color: #14b8a6; }
+.detail-teal .detail-icon { background: #f0fdfa; }
+
+.detail-amber { border-right-color: #f59e0b; }
+.detail-amber .detail-value { color: #f59e0b; }
+.detail-amber .detail-icon { background: #fffbeb; }
+
+.detail-cyan { border-right-color: #06b6d4; }
+.detail-cyan .detail-value { color: #06b6d4; }
+.detail-cyan .detail-icon { background: #ecfeff; }
+
+.detail-gray { border-right-color: #6b7280; }
+.detail-gray .detail-value { color: #6b7280; }
+.detail-gray .detail-icon { background: #f9fafb; }
+
+.detail-yellow { border-right-color: #eab308; }
+.detail-yellow .detail-value { color: #eab308; }
+.detail-yellow .detail-icon { background: #fefce8; }
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.detail-card:nth-child(1) { animation-delay: 0.05s; }
+.detail-card:nth-child(2) { animation-delay: 0.1s; }
+.detail-card:nth-child(3) { animation-delay: 0.15s; }
+.detail-card:nth-child(4) { animation-delay: 0.2s; }
+.detail-card:nth-child(5) { animation-delay: 0.25s; }
+.detail-card:nth-child(6) { animation-delay: 0.3s; }
+.detail-card:nth-child(7) { animation-delay: 0.35s; }
+.detail-card:nth-child(8) { animation-delay: 0.4s; }
+.detail-card:nth-child(9) { animation-delay: 0.45s; }
+.detail-card:nth-child(10) { animation-delay: 0.5s; }
+.detail-card:nth-child(11) { animation-delay: 0.55s; }
+.detail-card:nth-child(12) { animation-delay: 0.6s; }
+.detail-card:nth-child(13) { animation-delay: 0.65s; }
+.detail-card:nth-child(14) { animation-delay: 0.7s; }
+.detail-card:nth-child(15) { animation-delay: 0.75s; }
+
 /* قسم المؤشرات */
 .indicators-section, .raw-data-section { margin-bottom: 2rem; }
 .section-title {
     display: flex; align-items: center; gap: 0.75rem;
     font-size: 1.35rem; font-weight: 700;
     color: var(--primary);
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.5rem;
 }
 .title-icon { font-size: 1.3rem; }
 
@@ -406,7 +567,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
+    gap: 0.75rem;
     padding: 0.75rem;
     background: white;
     border-top: 1px solid #e2e8f0;
@@ -421,6 +582,15 @@ body {
 .status-dot.connected { background: var(--success); }
 .status-dot.error { background: var(--danger); }
 
+.auto-refresh-badge {
+    background: #f0fdf4;
+    color: #16a34a;
+    padding: 0.25rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
 /* الفوتر */
 .footer {
     background: var(--bg-dark);
@@ -434,11 +604,21 @@ body {
 /* الاستجابة */
 @media (max-width: 768px) {
     .header-content { flex-direction: column; text-align: center; }
-    .header-nav { justify-content: center; }
+    .header-nav { justify-content: center; flex-wrap: wrap; }
     .logo { justify-content: center; }
     .indicators-grid { grid-template-columns: 1fr; }
+    .details-grid { grid-template-columns: 1fr; }
     .compare-columns { flex-direction: column; }
     .compare-vs { margin: 0.5rem 0; }
     .program-info { flex-direction: column; text-align: center; }
     .info-header { text-align: center; }
+    .detail-card { padding: 0.875rem 1rem; }
+    .detail-icon { width: 42px; height: 42px; font-size: 1.5rem; }
+    .detail-value { font-size: 1.3rem; }
+}
+
+@media (max-width: 480px) {
+    .details-grid { grid-template-columns: 1fr; }
+    .nav-btn { padding: 0.5rem 0.75rem; font-size: 0.85rem; }
+    .section-title { font-size: 1.15rem; }
 }
