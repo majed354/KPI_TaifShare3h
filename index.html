@@ -35,6 +35,7 @@
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="single">📊 عرض فردي</button>
                 <button class="nav-btn" data-view="compare">⚖️ مقارنة</button>
+                <button class="nav-btn refresh-btn" onclick="refreshData()" title="تحديث البيانات">🔄</button>
             </nav>
         </div>
     </header>
@@ -82,8 +83,16 @@
                 </div>
             </section>
 
+            <!-- قسم الإحصائيات التفصيلية (جديد) -->
+            <section id="details-section" class="details-section hidden">
+                <h2 class="section-title"><span class="title-icon">📋</span> الإحصائيات التفصيلية</h2>
+                <p class="section-subtitle">البيانات الخام التي بُنيت عليها المؤشرات</p>
+                <div class="details-grid" id="details-grid"></div>
+            </section>
+
             <section id="indicators-section" class="indicators-section hidden">
-                <h2 class="section-title"><span class="title-icon">📈</span> المؤشرات الرئيسية</h2>
+                <h2 class="section-title"><span class="title-icon">📈</span> المؤشرات المحسوبة</h2>
+                <p class="section-subtitle">المؤشرات الرئيسية المستخلصة من البيانات</p>
                 <div class="indicators-grid" id="indicators-grid"></div>
             </section>
 
@@ -200,6 +209,7 @@
     <div class="data-source-bar">
         <span class="status-dot" id="status-dot"></span>
         <span id="data-source-text">جاري التحميل...</span>
+        <span class="auto-refresh-badge">🔄 تحديث تلقائي</span>
     </div>
 
     <footer class="footer">
@@ -208,22 +218,6 @@
         </div>
     </footer>
 
-    <!-- ===== إعدادات Google Sheets ===== -->
-    <script>
-    // ═══════════════════════════════════════════════════════════════
-    // 🔗 لربط الموقع بـ Google Sheets:
-    // ═══════════════════════════════════════════════════════════════
-    // 1. افتح Google Sheet الخاص بك
-    // 2. اذهب إلى: ملف > مشاركة > نشر على الويب
-    // 3. اختر "مستند بالكامل" و "قيم مفصولة بفاصلة (.csv)"
-    // 4. انسخ الرابط وضعه هنا:
-    
-    const GOOGLE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTk1KNZy2-ZKh_aG_bFBUqdXB2G2zGYWqjH2ueJvvMGvvCR3Q6f4M9PLzL1OwOm7A/pub?output=csv'; // ← ضع رابط CSV هنا
-    
-    // مثال:
-    // const GOOGLE_SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-xxx/pub?output=csv';
-    // ═══════════════════════════════════════════════════════════════
-    </script>
     <script src="js/app.js"></script>
 </body>
 </html>
