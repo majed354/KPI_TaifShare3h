@@ -1,16 +1,9 @@
 /**
  * مؤشرات الأداء - كلية الشريعة والأنظمة
- * الإصدار 2.0 - محدث
- * 
- * المميزات:
- * - يدمج البيانات من جميع الصفوف (ذكور+إناث، سعوديين+غير سعوديين)
- * - يحفظ البيانات التفصيلية للعرض
- * - تحديث تلقائي كل 30 ثانية
- * - عرض الإحصائيات التفصيلية قبل المؤشرات
+ * الإصدار 2.1 - يدعم الهيكل الجديد والقديم
  */
 
 let programsData = [];
-let allRawData = []; // جميع البيانات الخام للعرض التفصيلي
 let currentData = null;
 let compareData = { item1: null, item2: null, title1: '', title2: '' };
 let autoRefreshInterval = null;
@@ -35,7 +28,7 @@ const INDICATORS = [
 ];
 
 // ========================================
-// تحويل السنة: 46 → 1446
+// تحويل السنة
 // ========================================
 function formatYear(y) {
     if (!y) return '';
@@ -50,7 +43,7 @@ function shortYear(y) {
 }
 
 // ========================================
-// تحميل البيانات مع تحديث تلقائي
+// تحميل البيانات
 // ========================================
 async function loadData(silent = false) {
     const statusDot = document.getElementById('status-dot');
@@ -59,23 +52,18 @@ async function loadData(silent = false) {
     try {
         if (!silent) statusText.textContent = 'جاري التحميل...';
         
-        // إضافة timestamp لتجنب التخزين المؤقت
         const timestamp = new Date().getTime();
         const response = await fetch(`data/data.csv?t=${timestamp}`);
         const csvText = await response.text();
         
         console.log('📄 تم تحميل الملف، الحجم:', csvText.length, 'حرف');
         
-        const result = parseCSV(csvText);
-        programsData = result.programs;
-        allRawData = result.rawRows;
+        programsData = parseCSV(csvText);
         
         const now = new Date().toLocaleTimeString('ar-SA');
         statusText.textContent = `✓ تم تحميل ${programsData.length} برنامج (${now})`;
         statusDot.classList.remove('error');
         statusDot.classList.add('connected');
-        
-        console.log('✅ البرامج:', programsData.map(p => p.name + ' (' + p.degree + ')'));
         
         if (!silent) initSelects();
         
@@ -87,7 +75,6 @@ async function loadData(silent = false) {
     }
 }
 
-// تفعيل التحديث التلقائي
 function startAutoRefresh(intervalSeconds = 30) {
     if (autoRefreshInterval) clearInterval(autoRefreshInterval);
     autoRefreshInterval = setInterval(() => {
@@ -97,61 +84,90 @@ function startAutoRefresh(intervalSeconds = 30) {
 }
 
 // ========================================
-// تحليل CSV الشامل
+// تحليل CSV (يدعم الهيكل الجديد والقديم)
 // ========================================
 function parseCSV(csvText) {
     console.log('🔄 بدء تحليل CSV...');
     
-    // تنظيف وتقسيم
     const lines = csvText.trim().split('\n').map(l => l.replace(/\r/g, ''));
-    if (lines.length < 2) return { programs: [], rawRows: [] };
+    if (lines.length < 2) return [];
     
-    // تحديد الفاصل
     const firstLine = lines[0];
     const delimiter = firstLine.includes(';') ? ';' : ',';
-    console.log('📌 الفاصل:', delimiter === ';' ? 'فاصلة منقوطة' : 'فاصلة');
     
-    // استخراج الرؤوس
     const headers = lines[0].split(delimiter).map(h => h.trim().replace(/^\uFEFF/, ''));
     console.log('📋 الأعمدة:', headers);
     
-    // إيجاد فهرس كل عمود (بحث مرن)
+    // تحديد نوع الملف (جديد أو قديم)
+    const isNewFormat = headers.includes('students_total') || headers.includes('students_male');
+    console.log('📌 نوع الملف:', isNewFormat ? 'الهيكل الجديد' : 'الهيكل القديم');
+    
+    // إيجاد فهرس الأعمدة
     const col = {};
     headers.forEach((h, i) => {
         const header = h.toLowerCase();
         const headerAr = h;
         
         // الأعمدة الأساسية
-        if (header === 'dept_aname' || header.includes('dept')) col.dept = i;
-        if (header === 'major_aname' || header.includes('major')) col.prog = i;
-        if (header === 'degree_aname' || header.includes('degree')) col.degree = i;
+        if (header.includes('dept')) col.dept = i;
+        if (header.includes('major')) col.prog = i;
+        if (header.includes('degree')) col.degree = i;
         if (header === 'semester') col.semester = i;
-        if (header === 'gender_aname' || header.includes('gender')) col.gender = i;
-        if (header.includes('considered') || header.includes('nat')) col.nationality = i;
-        if (header === 'join_semester' || header.includes('join')) col.join = i;
+        if (header.includes('gender')) col.gender = i;
+        if (header.includes('nat') || header.includes('considered')) col.nationality = i;
+        if (header.includes('join')) col.join = i;
         
-        // الأعمدة العربية
-        if (headerAr.includes('المنتظمين')) col.students = i;
-        if (headerAr.includes('الخريجين')) col.graduates = i;
-        if (headerAr.includes('تقييم جودة المقررات') || headerAr.includes('جودة المقررات')) col.courseEval = i;
-        if (headerAr.includes('خبرة البرنامج')) col.expEval = i;
-        if (headerAr.includes('الإجمالي للأعضاء') || headerAr === 'العدد الإجمالي للأعضاء') col.facultyTotal = i;
-        if (headerAr.includes('الأعضاء الذكور')) col.facultyMale = i;
-        if (headerAr.includes('نشروا بحث')) col.facultyPub = i;
-        if (headerAr.includes('الأعضاء الدكاترة') || headerAr.includes('الدكاترة')) col.facultyPhd = i;
-        if (headerAr.includes('الأبحاث المنشورة')) col.research = i;
-        if (headerAr.includes('الاقتباسات')) col.citations = i;
-        if (headerAr.includes('الشعب الإجمالي') || headerAr === 'عدد الشعب الإجمالي') col.sectionsTotal = i;
-        if (headerAr.includes('شعب الذكور')) col.sectionsMale = i;
+        // ═══════════════════════════════════════
+        // أعمدة الهيكل الجديد (إنجليزي)
+        // ═══════════════════════════════════════
+        if (header === 'students_total') col.students_total = i;
+        if (header === 'students_male') col.students_male = i;
+        if (header === 'students_female') col.students_female = i;
+        if (header === 'students_saudi') col.students_saudi = i;
+        if (header === 'students_international') col.students_intl = i;
+        if (header === 'students_new') col.students_new = i;
+        if (header === 'students_retained') col.students_retained = i;
+        if (header === 'graduates_total') col.graduates_total = i;
+        if (header === 'graduates_ontime') col.graduates_ontime = i;
+        if (header === 'sections_total') col.sections_total = i;
+        if (header === 'sections_male') col.sections_male = i;
+        if (header === 'sections_female') col.sections_female = i;
+        if (header === 'faculty_total') col.faculty_total = i;
+        if (header === 'faculty_phd') col.faculty_phd = i;
+        if (header === 'faculty_male') col.faculty_male = i;
+        if (header === 'faculty_female') col.faculty_female = i;
+        if (header === 'faculty_published') col.faculty_published = i;
+        if (header === 'research_count') col.research_count = i;
+        if (header === 'citations') col.citations = i;
+        if (header === 'eval_courses') col.eval_courses = i;
+        if (header === 'eval_experience') col.eval_experience = i;
+        if (header === 'eval_employers') col.eval_employers = i;
+        if (header === 'performance_rate') col.performance_rate = i;
+        if (header === 'employment_rate') col.employment_rate = i;
+        
+        // ═══════════════════════════════════════
+        // أعمدة الهيكل القديم (عربي)
+        // ═══════════════════════════════════════
+        if (headerAr.includes('المنتظمين')) col.students_old = i;
+        if (headerAr.includes('الخريجين')) col.graduates_old = i;
+        if (headerAr.includes('تقييم جودة المقررات')) col.courseEval_old = i;
+        if (headerAr.includes('خبرة البرنامج')) col.expEval_old = i;
+        if (headerAr.includes('الإجمالي للأعضاء')) col.facultyTotal_old = i;
+        if (headerAr.includes('الأعضاء الذكور')) col.facultyMale_old = i;
+        if (headerAr.includes('نشروا بحث')) col.facultyPub_old = i;
+        if (headerAr.includes('الدكاترة')) col.facultyPhd_old = i;
+        if (headerAr.includes('الأبحاث المنشورة')) col.research_old = i;
+        if (headerAr.includes('الاقتباسات')) col.citations_old = i;
+        if (headerAr.includes('الشعب الإجمالي')) col.sectionsTotal_old = i;
+        if (headerAr.includes('شعب الذكور')) col.sectionsMale_old = i;
     });
     
     console.log('🔢 فهرس الأعمدة:', col);
     
     // ═══════════════════════════════════════════════════════════
-    // جمع البيانات الخام وتصنيفها
+    // معالجة الصفوف
     // ═══════════════════════════════════════════════════════════
-    const rawRows = [];
-    const aggregated = {}; // للبيانات المجمعة
+    const aggregated = {};
     
     for (let i = 1; i < lines.length; i++) {
         const vals = lines[i].split(delimiter).map(v => v.trim());
@@ -160,160 +176,146 @@ function parseCSV(csvText) {
         const prog = vals[col.prog] || '';
         const degree = vals[col.degree] || '';
         const semester = vals[col.semester] || '';
-        const gender = vals[col.gender] || '';
-        const nationality = vals[col.nationality] || '';
-        const joinSem = vals[col.join] || '';
         
-        // تجاهل الصفوف بدون برنامج
-        if (!prog) continue;
+        if (!prog || !semester) continue;
         
-        // استخراج القيم
-        const rowData = {
-            dept: vals[col.dept] || '',
-            prog: prog,
-            degree: degree,
-            semester: shortYear(semester),
-            gender: gender,
-            nationality: nationality,
-            joinSemester: joinSem,
-            students: parseFloat(vals[col.students]) || 0,
-            graduates: parseFloat(vals[col.graduates]) || 0,
-            courseEval: parseFloat(vals[col.courseEval]) || 0,
-            expEval: parseFloat(vals[col.expEval]) || 0,
-            facultyTotal: parseFloat(vals[col.facultyTotal]) || 0,
-            facultyMale: parseFloat(vals[col.facultyMale]) || 0,
-            facultyPub: parseFloat(vals[col.facultyPub]) || 0,
-            facultyPhd: parseFloat(vals[col.facultyPhd]) || 0,
-            research: parseFloat(vals[col.research]) || 0,
-            citations: parseFloat(vals[col.citations]) || 0,
-            sectionsTotal: parseFloat(vals[col.sectionsTotal]) || 0,
-            sectionsMale: parseFloat(vals[col.sectionsMale]) || 0,
-        };
+        const key = `${prog}|${degree}|${shortYear(semester)}`;
         
-        rawRows.push(rowData);
-        
-        // ═══════════════════════════════════════════════════════════
-        // تجميع البيانات لكل برنامج/سنة
-        // ═══════════════════════════════════════════════════════════
-        if (!rowData.semester) continue; // تجاهل صفوف بدون سنة
-        
-        const key = `${prog}|${degree}|${rowData.semester}`;
-        
-        if (!aggregated[key]) {
+        // للهيكل الجديد: صف واحد لكل برنامج/سنة
+        if (isNewFormat) {
             aggregated[key] = {
-                dept: rowData.dept,
+                dept: vals[col.dept] || '',
                 prog: prog,
                 degree: degree,
-                semester: rowData.semester,
+                semester: shortYear(semester),
                 
-                // البيانات الإجمالية
-                students_total: 0,
-                graduates_total: 0,
-                courseEval: 0,
-                expEval: 0,
-                facultyTotal: 0,
-                facultyMale: 0,
-                facultyPub: 0,
-                facultyPhd: 0,
-                research: 0,
-                citations: 0,
-                sectionsTotal: 0,
-                sectionsMale: 0,
+                // بيانات الطلاب
+                students_total: parseFloat(vals[col.students_total]) || 0,
+                students_male: parseFloat(vals[col.students_male]) || 0,
+                students_female: parseFloat(vals[col.students_female]) || 0,
+                students_saudi: parseFloat(vals[col.students_saudi]) || 0,
+                students_intl: parseFloat(vals[col.students_intl]) || 0,
+                students_new: parseFloat(vals[col.students_new]) || 0,
+                students_retained: parseFloat(vals[col.students_retained]) || 0,
                 
-                // البيانات التفصيلية
-                details: {
-                    students_male: 0,
-                    students_female: 0,
-                    students_saudi: 0,
-                    students_nonSaudi: 0,
-                    graduates_male: 0,
-                    graduates_female: 0,
-                    graduates_saudi: 0,
-                    graduates_nonSaudi: 0,
-                    
-                    // للتتبع
-                    has_gender_breakdown: false,
-                    has_nationality_breakdown: false,
-                }
+                // بيانات الخريجين
+                graduates_total: parseFloat(vals[col.graduates_total]) || 0,
+                graduates_ontime: parseFloat(vals[col.graduates_ontime]) || 0,
+                
+                // بيانات الشعب
+                sections_total: parseFloat(vals[col.sections_total]) || 0,
+                sections_male: parseFloat(vals[col.sections_male]) || 0,
+                sections_female: parseFloat(vals[col.sections_female]) || 0,
+                
+                // بيانات هيئة التدريس
+                faculty_total: parseFloat(vals[col.faculty_total]) || 0,
+                faculty_phd: parseFloat(vals[col.faculty_phd]) || 0,
+                faculty_male: parseFloat(vals[col.faculty_male]) || 0,
+                faculty_female: parseFloat(vals[col.faculty_female]) || 0,
+                faculty_published: parseFloat(vals[col.faculty_published]) || 0,
+                
+                // بيانات البحث العلمي
+                research_count: parseFloat(vals[col.research_count]) || 0,
+                citations: parseFloat(vals[col.citations]) || 0,
+                
+                // بيانات التقييم
+                eval_courses: parseFloat(vals[col.eval_courses]) || 0,
+                eval_experience: parseFloat(vals[col.eval_experience]) || 0,
+                eval_employers: parseFloat(vals[col.eval_employers]) || 0,
+                performance_rate: parseFloat(vals[col.performance_rate]) || 0,
+                employment_rate: parseFloat(vals[col.employment_rate]) || 0,
             };
-        }
-        
-        const agg = aggregated[key];
-        
-        // ═══════════════════════════════════════════════════════════
-        // منطق الدمج الذكي
-        // ═══════════════════════════════════════════════════════════
-        
-        // 1. البيانات الإجمالية (Gender=All, Nationality=All, Join_Semester=All)
-        if (gender === 'All' && (nationality === 'All' || nationality === '') && joinSem === 'All') {
-            // هذا صف إجمالي - نأخذ منه البيانات المباشرة
-            if (rowData.students > 0) agg.students_total = rowData.students;
-            if (rowData.graduates > 0) agg.graduates_total = rowData.graduates;
-            if (rowData.courseEval > 0) agg.courseEval = rowData.courseEval;
-            if (rowData.expEval > 0) agg.expEval = rowData.expEval;
-            if (rowData.facultyTotal > 0) agg.facultyTotal = rowData.facultyTotal;
-            if (rowData.facultyMale > 0) agg.facultyMale = rowData.facultyMale;
-            if (rowData.facultyPub > 0) agg.facultyPub = rowData.facultyPub;
-            if (rowData.facultyPhd > 0) agg.facultyPhd = rowData.facultyPhd;
-            if (rowData.research > 0) agg.research = rowData.research;
-            if (rowData.citations > 0) agg.citations = rowData.citations;
-            if (rowData.sectionsTotal > 0) agg.sectionsTotal = rowData.sectionsTotal;
-            if (rowData.sectionsMale > 0) agg.sectionsMale = rowData.sectionsMale;
-        }
-        
-        // 2. بيانات حسب الجنس (Gender=ذكر أو أنثى)
-        if (gender === 'ذكر' && (nationality === 'All' || nationality === '') && joinSem === 'All') {
-            agg.details.students_male = rowData.students;
-            agg.details.graduates_male = rowData.graduates;
-            agg.details.has_gender_breakdown = true;
-        }
-        if (gender === 'أنثى' && (nationality === 'All' || nationality === '') && joinSem === 'All') {
-            agg.details.students_female = rowData.students;
-            agg.details.graduates_female = rowData.graduates;
-            agg.details.has_gender_breakdown = true;
-        }
-        
-        // 3. بيانات حسب الجنسية (Nationality=سعودي أو غير سعودي)
-        if (gender === 'All' && nationality === 'سعودي' && joinSem === 'All') {
-            agg.details.students_saudi = rowData.students;
-            agg.details.graduates_saudi = rowData.graduates;
-            agg.details.has_nationality_breakdown = true;
-        }
-        if (gender === 'All' && (nationality === 'غير سعودي' || nationality === 'Non-Saudi') && joinSem === 'All') {
-            agg.details.students_nonSaudi = rowData.students;
-            agg.details.graduates_nonSaudi = rowData.graduates;
-            agg.details.has_nationality_breakdown = true;
+        } else {
+            // للهيكل القديم: دمج الصفوف المتعددة
+            const gender = vals[col.gender] || '';
+            const nationality = vals[col.nationality] || '';
+            const joinSem = vals[col.join] || '';
+            
+            if (!aggregated[key]) {
+                aggregated[key] = {
+                    dept: vals[col.dept] || '',
+                    prog: prog,
+                    degree: degree,
+                    semester: shortYear(semester),
+                    students_total: 0, students_male: 0, students_female: 0,
+                    students_saudi: 0, students_intl: 0, students_new: 0, students_retained: 0,
+                    graduates_total: 0, graduates_ontime: 0,
+                    sections_total: 0, sections_male: 0, sections_female: 0,
+                    faculty_total: 0, faculty_phd: 0, faculty_male: 0, faculty_female: 0, faculty_published: 0,
+                    research_count: 0, citations: 0,
+                    eval_courses: 0, eval_experience: 0, eval_employers: 0,
+                    performance_rate: 0, employment_rate: 0,
+                };
+            }
+            
+            const agg = aggregated[key];
+            
+            // دمج البيانات من الصفوف المتعددة
+            if (gender === 'All' && (nationality === 'All' || nationality === '') && joinSem === 'All') {
+                if (col.students_old !== undefined && vals[col.students_old]) 
+                    agg.students_total = parseFloat(vals[col.students_old]) || 0;
+                if (col.graduates_old !== undefined && vals[col.graduates_old]) 
+                    agg.graduates_total = parseFloat(vals[col.graduates_old]) || 0;
+                if (col.courseEval_old !== undefined && vals[col.courseEval_old]) 
+                    agg.eval_courses = parseFloat(vals[col.courseEval_old]) || 0;
+                if (col.expEval_old !== undefined && vals[col.expEval_old]) 
+                    agg.eval_experience = parseFloat(vals[col.expEval_old]) || 0;
+                if (col.facultyTotal_old !== undefined && vals[col.facultyTotal_old]) 
+                    agg.faculty_total = parseFloat(vals[col.facultyTotal_old]) || 0;
+                if (col.facultyMale_old !== undefined && vals[col.facultyMale_old]) 
+                    agg.faculty_male = parseFloat(vals[col.facultyMale_old]) || 0;
+                if (col.facultyPhd_old !== undefined && vals[col.facultyPhd_old]) 
+                    agg.faculty_phd = parseFloat(vals[col.facultyPhd_old]) || 0;
+                if (col.facultyPub_old !== undefined && vals[col.facultyPub_old]) 
+                    agg.faculty_published = parseFloat(vals[col.facultyPub_old]) || 0;
+                if (col.research_old !== undefined && vals[col.research_old]) 
+                    agg.research_count = parseFloat(vals[col.research_old]) || 0;
+                if (col.citations_old !== undefined && vals[col.citations_old]) 
+                    agg.citations = parseFloat(vals[col.citations_old]) || 0;
+                if (col.sectionsTotal_old !== undefined && vals[col.sectionsTotal_old]) 
+                    agg.sections_total = parseFloat(vals[col.sectionsTotal_old]) || 0;
+                if (col.sectionsMale_old !== undefined && vals[col.sectionsMale_old]) 
+                    agg.sections_male = parseFloat(vals[col.sectionsMale_old]) || 0;
+            }
+            
+            // بيانات الذكور
+            if (gender === 'ذكر' && (nationality === 'All' || nationality === '') && joinSem === 'All') {
+                if (col.students_old !== undefined && vals[col.students_old])
+                    agg.students_male = parseFloat(vals[col.students_old]) || 0;
+            }
+            
+            // بيانات السعوديين
+            if (gender === 'All' && nationality === 'سعودي' && joinSem === 'All') {
+                if (col.students_old !== undefined && vals[col.students_old])
+                    agg.students_saudi = parseFloat(vals[col.students_old]) || 0;
+            }
         }
     }
     
-    console.log('📊 السجلات المجمعة:', Object.keys(aggregated).length);
-    
     // ═══════════════════════════════════════════════════════════
-    // حساب الإجماليات من التفاصيل إذا لم تكن موجودة
+    // حساب القيم المشتقة
     // ═══════════════════════════════════════════════════════════
     for (const key in aggregated) {
         const agg = aggregated[key];
         
-        // إذا لم يكن هناك إجمالي للطلاب، نحسبه من الذكور والإناث
-        if (agg.students_total === 0 && agg.details.has_gender_breakdown) {
-            agg.students_total = agg.details.students_male + agg.details.students_female;
+        // حساب الإناث
+        if (agg.students_female === 0 && agg.students_total > 0 && agg.students_male > 0) {
+            agg.students_female = agg.students_total - agg.students_male;
         }
         
-        // إذا لم يكن هناك إجمالي للخريجين، نحسبه من الذكور والإناث
-        if (agg.graduates_total === 0 && agg.details.has_gender_breakdown) {
-            agg.graduates_total = agg.details.graduates_male + agg.details.graduates_female;
+        // حساب الدوليين
+        if (agg.students_intl === 0 && agg.students_total > 0 && agg.students_saudi > 0) {
+            agg.students_intl = agg.students_total - agg.students_saudi;
         }
         
-        // حساب غير السعوديين إذا كان لدينا الإجمالي والسعوديين
-        if (agg.details.students_saudi > 0 && agg.students_total > 0 && agg.details.students_nonSaudi === 0) {
-            agg.details.students_nonSaudi = agg.students_total - agg.details.students_saudi;
-            agg.details.has_nationality_breakdown = true;
+        // حساب شعب الإناث
+        if (agg.sections_female === 0 && agg.sections_total > 0 && agg.sections_male > 0) {
+            agg.sections_female = agg.sections_total - agg.sections_male;
         }
         
-        // حساب الإناث إذا كان لدينا الإجمالي والذكور
-        if (agg.details.students_male > 0 && agg.students_total > 0 && agg.details.students_female === 0) {
-            agg.details.students_female = agg.students_total - agg.details.students_male;
-            agg.details.has_gender_breakdown = true;
+        // حساب أعضاء هيئة التدريس الإناث
+        if (agg.faculty_female === 0 && agg.faculty_total > 0 && agg.faculty_male > 0) {
+            agg.faculty_female = agg.faculty_total - agg.faculty_male;
         }
     }
     
@@ -335,34 +337,14 @@ function parseCSV(csvText) {
             };
         }
         
-        programs[progKey].years[d.semester] = {
-            // البيانات الأساسية
-            students: d.students_total || '',
-            graduates: d.graduates_total || '',
-            course_eval: d.courseEval || '',
-            experience_eval: d.expEval || '',
-            faculty_total: d.facultyTotal || '',
-            faculty_male: d.facultyMale || '',
-            faculty_published: d.facultyPub || '',
-            faculty_phd: d.facultyPhd || '',
-            research_count: d.research || '',
-            citations: d.citations || '',
-            sections_total: d.sectionsTotal || '',
-            sections_male: d.sectionsMale || '',
-            
-            // التفاصيل
-            details: d.details
-        };
+        programs[progKey].years[d.semester] = d;
     }
     
-    const result = Object.values(programs);
-    console.log('✅ البرامج النهائية:', result.length);
-    
-    return { programs: result, rawRows: rawRows };
+    return Object.values(programs);
 }
 
 // ========================================
-// حساب المؤشرات من البيانات
+// حساب المؤشرات
 // ========================================
 function calculateIndicators(raw) {
     if (!raw?.data) return {};
@@ -370,58 +352,55 @@ function calculateIndicators(raw) {
     const d = raw.data;
     const ind = {};
     
-    // البيانات الأساسية
-    const students = parseFloat(d.students) || 0;
-    const graduates = parseFloat(d.graduates) || 0;
-    const faculty = parseFloat(d.faculty_total) || 0;
-    const published = parseFloat(d.faculty_published) || 0;
-    const research = parseFloat(d.research_count) || 0;
-    const citations = parseFloat(d.citations) || 0;
-    
     // المؤشرات المباشرة
-    ind.experience_eval = d.experience_eval ? parseFloat(d.experience_eval).toFixed(2) : null;
-    ind.course_eval = d.course_eval ? parseFloat(d.course_eval).toFixed(2) : null;
+    ind.experience_eval = d.eval_experience ? d.eval_experience.toFixed(2) : null;
+    ind.course_eval = d.eval_courses ? d.eval_courses.toFixed(2) : null;
+    ind.employer_eval = d.eval_employers ? d.eval_employers.toFixed(2) : null;
+    ind.student_performance = d.performance_rate ? d.performance_rate.toFixed(1) : null;
+    ind.employment_rate = d.employment_rate ? d.employment_rate.toFixed(1) : null;
     
-    // المؤشرات غير المتوفرة حالياً
-    ind.graduation_rate = null;
+    // معدل التخرج بالوقت المحدد
+    if (d.graduates_total > 0 && d.graduates_ontime > 0) {
+        ind.graduation_rate = ((d.graduates_ontime / d.graduates_total) * 100).toFixed(1);
+    } else {
+        ind.graduation_rate = null;
+    }
+    
+    // معدل الاستبقاء (يحتاج بيانات السنة السابقة - غير متوفر حالياً)
     ind.retention_rate = null;
-    ind.student_performance = null;
-    ind.employment_rate = null;
-    ind.employer_eval = null;
-    ind.student_publication = null;
-    ind.patents = null;
     
-    // ═══════════════════════════════════════
-    // المؤشرات المحسوبة
-    // ═══════════════════════════════════════
-    
-    // نسبة الطلاب : هيئة التدريس
-    if (faculty > 0 && students > 0) {
-        ind.student_faculty_ratio = '1:' + Math.round(students / faculty);
+    // نسبة الطلاب/هيئة التدريس
+    if (d.faculty_total > 0 && d.students_total > 0) {
+        const ratio = Math.round(d.students_total / d.faculty_total);
+        ind.student_faculty_ratio = `1:${ratio}`;
     } else {
         ind.student_faculty_ratio = null;
     }
     
     // نسبة النشر العلمي
-    if (faculty > 0 && published > 0) {
-        ind.publication_pct = ((published / faculty) * 100).toFixed(1);
+    if (d.faculty_total > 0 && d.faculty_published > 0) {
+        ind.publication_pct = ((d.faculty_published / d.faculty_total) * 100).toFixed(1);
     } else {
         ind.publication_pct = null;
     }
     
     // البحوث لكل عضو
-    if (faculty > 0 && research > 0) {
-        ind.research_per_faculty = (research / faculty).toFixed(2);
+    if (d.faculty_total > 0 && d.research_count > 0) {
+        ind.research_per_faculty = (d.research_count / d.faculty_total).toFixed(2);
     } else {
         ind.research_per_faculty = null;
     }
     
     // الاقتباسات لكل عضو
-    if (faculty > 0 && citations > 0) {
-        ind.citations_per_faculty = (citations / faculty).toFixed(1);
+    if (d.faculty_total > 0 && d.citations > 0) {
+        ind.citations_per_faculty = (d.citations / d.faculty_total).toFixed(1);
     } else {
         ind.citations_per_faculty = null;
     }
+    
+    // المؤشرات غير المتوفرة
+    ind.student_publication = null;
+    ind.patents = null;
     
     return ind;
 }
@@ -500,6 +479,7 @@ function showSingleResults() {
     
     currentData = raw;
     const ind = calculateIndicators(raw);
+    const d = raw.data;
     
     // عرض المعلومات
     document.getElementById('degree-badge').textContent = raw.program.degree;
@@ -509,89 +489,92 @@ function showSingleResults() {
     // ═══════════════════════════════════════
     // عرض الإحصائيات التفصيلية
     // ═══════════════════════════════════════
-    const detailsSection = document.getElementById('details-section');
     const detailsGrid = document.getElementById('details-grid');
+    detailsGrid.innerHTML = '';
     
-    if (detailsSection && detailsGrid) {
-        detailsGrid.innerHTML = '';
+    // === بيانات الطلاب ===
+    if (d.students_total > 0) {
+        detailsGrid.innerHTML += createDetailCard('👥', 'إجمالي الطلاب المنتظمين', d.students_total, 'طالب', 'primary');
+    }
+    if (d.students_male > 0) {
+        detailsGrid.innerHTML += createDetailCard('👨', 'الطلاب الذكور', d.students_male, 'طالب', 'blue');
+    }
+    if (d.students_female > 0) {
+        detailsGrid.innerHTML += createDetailCard('👩', 'الطالبات الإناث', d.students_female, 'طالبة', 'pink');
+    }
+    if (d.students_saudi > 0) {
+        detailsGrid.innerHTML += createDetailCard('🇸🇦', 'الطلاب السعوديون', d.students_saudi, 'طالب', 'green');
+    }
+    if (d.students_intl > 0) {
+        detailsGrid.innerHTML += createDetailCard('🌍', 'الطلاب الدوليون', d.students_intl, 'طالب', 'orange');
+    }
+    if (d.students_new > 0) {
+        detailsGrid.innerHTML += createDetailCard('🆕', 'الطلاب المستجدون', d.students_new, 'طالب', 'cyan');
+    }
+    
+    // === بيانات الخريجين ===
+    if (d.graduates_total > 0) {
+        detailsGrid.innerHTML += createDetailCard('🎓', 'إجمالي الخريجين', d.graduates_total, 'خريج', 'success');
+    }
+    if (d.graduates_ontime > 0) {
+        detailsGrid.innerHTML += createDetailCard('⏱️', 'الخريجين بالوقت المحدد', d.graduates_ontime, 'خريج', 'teal');
+    }
+    
+    // === بيانات الشعب ===
+    if (d.sections_total > 0) {
+        detailsGrid.innerHTML += createDetailCard('🏛️', 'إجمالي الشعب', d.sections_total, 'شعبة', 'gray');
         
-        const data = raw.data;
-        const details = data.details || {};
-        
-        // عدد الطلاب
-        if (data.students) {
-            detailsGrid.innerHTML += createDetailCard('👥', 'إجمالي الطلاب المنتظمين', data.students, 'طالب', 'primary');
-        }
-        
-        // تفصيل الطلاب حسب الجنس
-        if (details.has_gender_breakdown) {
-            if (details.students_male > 0) {
-                detailsGrid.innerHTML += createDetailCard('👨', 'الطلاب الذكور', details.students_male, 'طالب', 'blue');
-            }
-            if (details.students_female > 0) {
-                detailsGrid.innerHTML += createDetailCard('👩', 'الطالبات الإناث', details.students_female, 'طالبة', 'pink');
-            }
-        }
-        
-        // تفصيل الطلاب حسب الجنسية
-        if (details.has_nationality_breakdown) {
-            if (details.students_saudi > 0) {
-                detailsGrid.innerHTML += createDetailCard('🇸🇦', 'الطلاب السعوديون', details.students_saudi, 'طالب', 'green');
-            }
-            if (details.students_nonSaudi > 0) {
-                detailsGrid.innerHTML += createDetailCard('🌍', 'الطلاب غير السعوديين', details.students_nonSaudi, 'طالب', 'orange');
-            }
-        }
-        
-        // عدد الخريجين
-        if (data.graduates) {
-            detailsGrid.innerHTML += createDetailCard('🎓', 'إجمالي الخريجين', data.graduates, 'خريج', 'success');
-        }
-        
-        // تفصيل الخريجين حسب الجنس
-        if (details.graduates_male > 0) {
-            detailsGrid.innerHTML += createDetailCard('👨‍🎓', 'الخريجون الذكور', details.graduates_male, 'خريج', 'blue');
-        }
-        if (details.graduates_female > 0) {
-            detailsGrid.innerHTML += createDetailCard('👩‍🎓', 'الخريجات الإناث', details.graduates_female, 'خريجة', 'pink');
-        }
-        
-        // هيئة التدريس
-        if (data.faculty_total) {
-            detailsGrid.innerHTML += createDetailCard('👨‍🏫', 'إجمالي أعضاء هيئة التدريس', data.faculty_total, 'عضو', 'purple');
-        }
-        if (data.faculty_male) {
-            detailsGrid.innerHTML += createDetailCard('👔', 'الأعضاء الذكور', data.faculty_male, 'عضو', 'blue');
-        }
-        if (data.faculty_phd) {
-            detailsGrid.innerHTML += createDetailCard('📜', 'الأعضاء الدكاترة', data.faculty_phd, 'دكتور', 'indigo');
-        }
-        if (data.faculty_published) {
-            detailsGrid.innerHTML += createDetailCard('📝', 'الأعضاء الناشرون', data.faculty_published, 'عضو', 'teal');
-        }
-        
-        // الأبحاث
-        if (data.research_count) {
-            detailsGrid.innerHTML += createDetailCard('📚', 'الأبحاث المنشورة', data.research_count, 'بحث', 'amber');
-        }
-        if (data.citations) {
-            detailsGrid.innerHTML += createDetailCard('📎', 'الاقتباسات', data.citations, 'اقتباس', 'cyan');
-        }
-        
-        // الشعب
-        if (data.sections_total) {
-            detailsGrid.innerHTML += createDetailCard('🏛️', 'إجمالي الشعب', data.sections_total, 'شعبة', 'gray');
-        }
-        
-        // التقييمات
-        if (data.course_eval) {
-            detailsGrid.innerHTML += createDetailCard('⭐', 'تقييم جودة المقررات', parseFloat(data.course_eval).toFixed(2), 'من 5', 'yellow');
-        }
-        if (data.experience_eval) {
-            detailsGrid.innerHTML += createDetailCard('✨', 'تقييم خبرة البرنامج', parseFloat(data.experience_eval).toFixed(2), 'من 5', 'yellow');
-        }
-        
-        detailsSection.classList.remove('hidden');
+        // متوسط الطلاب/شعبة
+        const avgPerSection = (d.students_total / d.sections_total).toFixed(1);
+        detailsGrid.innerHTML += createDetailCard('📊', 'متوسط الطلاب/شعبة', avgPerSection, 'طالب', 'indigo');
+    }
+    if (d.sections_male > 0) {
+        detailsGrid.innerHTML += createDetailCard('🏛️', 'شعب الذكور', d.sections_male, 'شعبة', 'blue');
+    }
+    if (d.sections_female > 0) {
+        detailsGrid.innerHTML += createDetailCard('🏛️', 'شعب الإناث', d.sections_female, 'شعبة', 'pink');
+    }
+    
+    // === بيانات هيئة التدريس ===
+    if (d.faculty_total > 0) {
+        detailsGrid.innerHTML += createDetailCard('👨‍🏫', 'إجمالي أعضاء هيئة التدريس', d.faculty_total, 'عضو', 'purple');
+    }
+    if (d.faculty_phd > 0) {
+        detailsGrid.innerHTML += createDetailCard('📜', 'الأعضاء الدكاترة', d.faculty_phd, 'دكتور', 'indigo');
+    }
+    if (d.faculty_male > 0) {
+        detailsGrid.innerHTML += createDetailCard('👔', 'الأعضاء الذكور', d.faculty_male, 'عضو', 'blue');
+    }
+    if (d.faculty_female > 0) {
+        detailsGrid.innerHTML += createDetailCard('👩‍🏫', 'الأعضاء الإناث', d.faculty_female, 'عضو', 'pink');
+    }
+    if (d.faculty_published > 0) {
+        detailsGrid.innerHTML += createDetailCard('📝', 'الأعضاء الناشرون', d.faculty_published, 'عضو', 'teal');
+    }
+    
+    // === بيانات البحث العلمي ===
+    if (d.research_count > 0) {
+        detailsGrid.innerHTML += createDetailCard('📚', 'الأبحاث المنشورة', d.research_count, 'بحث', 'amber');
+    }
+    if (d.citations > 0) {
+        detailsGrid.innerHTML += createDetailCard('📎', 'الاقتباسات', d.citations, 'اقتباس', 'cyan');
+    }
+    
+    // === بيانات التقييم ===
+    if (d.eval_courses > 0) {
+        detailsGrid.innerHTML += createDetailCard('⭐', 'تقييم جودة المقررات', d.eval_courses.toFixed(2), 'من 5', 'yellow');
+    }
+    if (d.eval_experience > 0) {
+        detailsGrid.innerHTML += createDetailCard('✨', 'تقييم خبرة البرنامج', d.eval_experience.toFixed(2), 'من 5', 'yellow');
+    }
+    if (d.eval_employers > 0) {
+        detailsGrid.innerHTML += createDetailCard('🏢', 'تقويم جهات التوظيف', d.eval_employers.toFixed(2), 'من 5', 'yellow');
+    }
+    if (d.performance_rate > 0) {
+        detailsGrid.innerHTML += createDetailCard('📈', 'مستوى أداء الطالب', d.performance_rate + '%', '', 'success');
+    }
+    if (d.employment_rate > 0) {
+        detailsGrid.innerHTML += createDetailCard('💼', 'نسبة توظيف الخريجين', d.employment_rate + '%', '', 'success');
     }
     
     // ═══════════════════════════════════════
@@ -616,21 +599,13 @@ function showSingleResults() {
         `;
     });
     
-    // ═══════════════════════════════════════
-    // إخفاء قسم البيانات الخام القديم (تم استبداله بالتفاصيل)
-    // ═══════════════════════════════════════
-    const rawDataSection = document.getElementById('raw-data-section');
-    if (rawDataSection) {
-        rawDataSection.classList.add('hidden');
-    }
-    
     // إظهار الأقسام
     document.getElementById('program-info').classList.remove('hidden');
+    document.getElementById('details-section').classList.remove('hidden');
     document.getElementById('indicators-section').classList.remove('hidden');
     document.getElementById('program-info').scrollIntoView({ behavior: 'smooth' });
 }
 
-// إنشاء بطاقة تفصيلية
 function createDetailCard(icon, label, value, unit, color) {
     return `
         <div class="detail-card detail-${color}">
@@ -765,40 +740,56 @@ function exportCompareToPDF() {
 function exportToExcel() {
     if (!currentData) return;
     const ind = calculateIndicators(currentData);
-    const data = currentData.data;
-    const details = data.details || {};
+    const d = currentData.data;
     
     const sheetData = [
         ['تقرير مؤشرات الأداء'],
         ['البرنامج: ' + currentData.program.name],
         ['السنة: ' + formatYear(currentData.year)],
         [],
-        ['═══════════════════════════════════════'],
+        ['═══════════════════════════════════════════════════════════'],
         ['الإحصائيات التفصيلية'],
-        ['═══════════════════════════════════════'],
+        ['═══════════════════════════════════════════════════════════'],
         [],
         ['البيان', 'القيمة'],
-        ['إجمالي الطلاب', data.students || '—'],
-        ['الطلاب الذكور', details.students_male || '—'],
-        ['الطالبات الإناث', details.students_female || '—'],
-        ['الطلاب السعوديون', details.students_saudi || '—'],
-        ['الطلاب غير السعوديين', details.students_nonSaudi || '—'],
+        ['--- بيانات الطلاب ---', ''],
+        ['إجمالي الطلاب المنتظمين', d.students_total || '—'],
+        ['الطلاب الذكور', d.students_male || '—'],
+        ['الطالبات الإناث', d.students_female || '—'],
+        ['الطلاب السعوديون', d.students_saudi || '—'],
+        ['الطلاب الدوليون', d.students_intl || '—'],
+        ['الطلاب المستجدون', d.students_new || '—'],
         [],
-        ['إجمالي الخريجين', data.graduates || '—'],
-        ['الخريجون الذكور', details.graduates_male || '—'],
-        ['الخريجات الإناث', details.graduates_female || '—'],
+        ['--- بيانات الخريجين ---', ''],
+        ['إجمالي الخريجين', d.graduates_total || '—'],
+        ['الخريجين بالوقت المحدد', d.graduates_ontime || '—'],
         [],
-        ['إجمالي أعضاء هيئة التدريس', data.faculty_total || '—'],
-        ['الأعضاء الذكور', data.faculty_male || '—'],
-        ['الأعضاء الدكاترة', data.faculty_phd || '—'],
-        ['الأعضاء الناشرون', data.faculty_published || '—'],
+        ['--- بيانات الشعب ---', ''],
+        ['إجمالي الشعب', d.sections_total || '—'],
+        ['شعب الذكور', d.sections_male || '—'],
+        ['شعب الإناث', d.sections_female || '—'],
         [],
-        ['الأبحاث المنشورة', data.research_count || '—'],
-        ['إجمالي الاقتباسات', data.citations || '—'],
+        ['--- بيانات هيئة التدريس ---', ''],
+        ['إجمالي أعضاء هيئة التدريس', d.faculty_total || '—'],
+        ['الأعضاء الدكاترة', d.faculty_phd || '—'],
+        ['الأعضاء الذكور', d.faculty_male || '—'],
+        ['الأعضاء الإناث', d.faculty_female || '—'],
+        ['الأعضاء الناشرون', d.faculty_published || '—'],
         [],
-        ['═══════════════════════════════════════'],
+        ['--- بيانات البحث العلمي ---', ''],
+        ['الأبحاث المنشورة', d.research_count || '—'],
+        ['إجمالي الاقتباسات', d.citations || '—'],
+        [],
+        ['--- بيانات التقييم ---', ''],
+        ['تقييم جودة المقررات', d.eval_courses || '—'],
+        ['تقييم خبرة البرنامج', d.eval_experience || '—'],
+        ['تقويم جهات التوظيف', d.eval_employers || '—'],
+        ['مستوى أداء الطالب', d.performance_rate || '—'],
+        ['نسبة توظيف الخريجين', d.employment_rate || '—'],
+        [],
+        ['═══════════════════════════════════════════════════════════'],
         ['المؤشرات المحسوبة'],
-        ['═══════════════════════════════════════'],
+        ['═══════════════════════════════════════════════════════════'],
         [],
         ['المؤشر', 'القيمة', 'الوحدة'],
         ...INDICATORS.map(i => [i.name, ind[i.key] || '—', i.unit])
@@ -833,12 +824,12 @@ function exportCompareToExcel() {
 // ========================================
 document.addEventListener('DOMContentLoaded', () => {
     loadData();
-    startAutoRefresh(30); // تحديث كل 30 ثانية
+    startAutoRefresh(30);
     
     // التنقل
-    document.querySelectorAll('.nav-btn').forEach(btn => {
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
         btn.addEventListener('click', () => {
-            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.nav-btn[data-view]').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.view-section').forEach(v => v.classList.add('hidden'));
             btn.classList.add('active');
             document.getElementById(btn.dataset.view + '-view').classList.remove('hidden');
@@ -853,7 +844,7 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('year-select').disabled = true;
         }
         document.getElementById('show-btn').disabled = true;
-        ['program-info', 'details-section', 'indicators-section', 'raw-data-section'].forEach(id => {
+        ['program-info', 'details-section', 'indicators-section'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.classList.add('hidden');
         });
@@ -925,15 +916,6 @@ function updateCompareBtn() {
     document.getElementById('compare-btn').disabled = !valid;
 }
 
-// ========================================
 // للتصحيح
-// ========================================
-window.debugData = () => {
-    console.log('📊 البرامج:', programsData);
-    console.log('📊 البيانات الخام:', allRawData);
-    console.log('📊 الحالي:', currentData);
-};
-
-window.refreshData = () => {
-    loadData(false);
-};
+window.debugData = () => console.log('📊 البرامج:', programsData, '📊 الحالي:', currentData);
+window.refreshData = () => loadData(false);
