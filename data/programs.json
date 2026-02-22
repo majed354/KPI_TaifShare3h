@@ -1,0 +1,360 @@
+[
+  {
+    "name": "الدراسات القرآنية المعاصرة",
+    "degree": "الماجستير",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_44": {
+          "students": "11.0",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "ذكر_44": {
+          "students": "5.0",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        },
+        "ذكر_All": {
+          "students": "14.0",
+          "graduates": "1.0",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        }
+      },
+      "45": {
+        "ذكر_45": {
+          "students": "15.0",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "All_45": {
+          "students": "15.0",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        },
+        "ذكر_All": {
+          "students": "24.0",
+          "graduates": "1.0",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        }
+      },
+      "46": {
+        "ذكر_All": {
+          "students": "23.0",
+          "graduates": "5.0",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        },
+        "All_46": {
+          "students": "9.0",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "All_44": {
+          "students": "16.0",
+          "graduates": "0.0",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        },
+        "ذكر_44": {
+          "students": "10.0",
+          "graduates": "0.0",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "",
+          "research_count": "",
+          "citations": ""
+        }
+      }
+    }
+  },
+  {
+    "name": "بكالوريوس القراءات",
+    "degree": "بكالوريوس",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        }
+      },
+      "45": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        }
+      },
+      "46": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        }
+      }
+    }
+  },
+  {
+    "name": "بكالوريوس القرآن وعلومه",
+    "degree": "بكالوريوس",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        }
+      },
+      "45": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        }
+      },
+      "46": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        }
+      }
+    }
+  },
+  {
+    "name": "ماجستير القراءات",
+    "degree": "الماجستير",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        }
+      },
+      "45": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        }
+      },
+      "46": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        }
+      }
+    }
+  },
+  {
+    "name": "دكتوراه القراءات",
+    "degree": "دكتوراه",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        }
+      },
+      "45": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        }
+      },
+      "46": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        }
+      }
+    }
+  },
+  {
+    "name": "دكتوراه الدراسات القرآنية",
+    "degree": "دكتوراه",
+    "dept": "القراءات",
+    "years": {
+      "44": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "13.0",
+          "research_count": "26.0",
+          "citations": "78.0"
+        }
+      },
+      "45": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "",
+          "faculty_published": "12.0",
+          "research_count": "26.0",
+          "citations": "65.0"
+        }
+      },
+      "46": {
+        "All_All": {
+          "students": "",
+          "graduates": "",
+          "course_eval": "",
+          "experience_eval": "",
+          "faculty_total": "34.0",
+          "faculty_published": "9.0",
+          "research_count": "16.0",
+          "citations": "24.0"
+        }
+      }
+    }
+  }
+]

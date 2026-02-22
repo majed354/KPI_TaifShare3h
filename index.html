@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مؤشرات الأداء | كلية الشريعة والأنظمة</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="header">
+    <div class="header-inner">
+        <div class="logo">
+            <div class="logo-icon">
+                <svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="18" stroke="currentColor" stroke-width="2"/><path d="M20 8v24M10 16h20M10 24h20" stroke="currentColor" stroke-width="2"/><circle cx="20" cy="20" r="5" fill="currentColor"/></svg>
+            </div>
+            <div>
+                <h1>مؤشرات الأداء</h1>
+                <p>كلية الشريعة والأنظمة - جامعة الطائف</p>
+            </div>
+        </div>
+        <nav class="nav-tabs">
+            <button class="nav-btn active" data-view="dashboard">لوحة المعلومات</button>
+            <button class="nav-btn" data-view="program">تفاصيل البرنامج</button>
+            <button class="nav-btn" data-view="compare">المقارنة</button>
+        </nav>
+    </div>
+</header>
+
+<main class="main">
+
+    <!-- ============ لوحة المعلومات ============ -->
+    <section id="dashboard-view" class="view active">
+        <div class="view-top">
+            <h2>لوحة المعلومات</h2>
+            <div class="year-picker">
+                <label>السنة الدراسية</label>
+                <select id="dash-year"></select>
+            </div>
+        </div>
+
+        <div class="summary-row" id="summary-row"></div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>الطلاب المنتظمون حسب البرنامج</h3>
+                <div class="chart-wrap chart-tall"><canvas id="chart-students"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <h3>معدلات التخرج بالوقت المحدد والاستبقاء (%)</h3>
+                <div class="chart-wrap chart-tall" id="chart-rates-wrap"><canvas id="chart-rates"></canvas></div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>توزيع الطلاب (ذكور / إناث)</h3>
+                <div class="chart-wrap"><canvas id="chart-gender"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <h3>المستجدون والخريجون</h3>
+                <div class="chart-wrap"><canvas id="chart-flow"></canvas></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>ملخص جميع البرامج</h3>
+            <div class="table-wrap">
+                <table class="data-table" id="tbl-programs">
+                    <thead>
+                        <tr>
+                            <th>البرنامج</th>
+                            <th>الدرجة</th>
+                            <th>القسم</th>
+                            <th>الطلاب</th>
+                            <th>ذكور</th>
+                            <th>إناث</th>
+                            <th>المستجدون</th>
+                            <th>الخريجون</th>
+                            <th>معدل الاستبقاء</th>
+                            <th>معدل التخرج بالوقت</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbl-body"></tbody>
+                    <tfoot id="tbl-foot"></tfoot>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ تفاصيل البرنامج ============ -->
+    <section id="program-view" class="view">
+        <div class="view-top">
+            <h2>تفاصيل البرنامج</h2>
+        </div>
+
+        <div class="card selector-card">
+            <div class="selector-row">
+                <div class="form-group">
+                    <label>البرنامج الأكاديمي</label>
+                    <select id="prog-select"><option value="">-- اختر البرنامج --</option></select>
+                </div>
+                <div class="form-group">
+                    <label>السنة الدراسية</label>
+                    <select id="prog-year" disabled><option value="">-- اختر --</option></select>
+                </div>
+                <button id="prog-show" class="btn-primary" disabled>عرض المؤشرات</button>
+            </div>
+        </div>
+
+        <div id="prog-results" class="hidden">
+            <div class="prog-header card">
+                <span class="badge" id="prog-badge"></span>
+                <h3 id="prog-name"></h3>
+                <p id="prog-year-label"></p>
+                <div class="export-btns">
+                    <button class="btn-sm" onclick="exportPDF()">PDF</button>
+                    <button class="btn-sm" onclick="exportExcel()">Excel</button>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="stats-grid"></div>
+
+            <div class="card">
+                <h3>المؤشرات المحسوبة</h3>
+                <div class="kpi-grid" id="kpi-grid"></div>
+            </div>
+
+            <div class="chart-card">
+                <h3>الاتجاه التاريخي</h3>
+                <div class="chart-wrap"><canvas id="chart-trend"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ المقارنة ============ -->
+    <section id="compare-view" class="view">
+        <div class="view-top">
+            <h2>مقارنة المؤشرات</h2>
+        </div>
+
+        <div class="card">
+            <div class="mode-toggle">
+                <button class="mode-btn active" data-mode="years">نفس البرنامج - سنتان مختلفتان</button>
+                <button class="mode-btn" data-mode="progs">برنامجان مختلفان - نفس السنة</button>
+            </div>
+
+            <div id="cmp-years-form" class="cmp-form">
+                <div class="form-group full">
+                    <label>البرنامج</label>
+                    <select id="cmp-prog"><option value="">-- اختر --</option></select>
+                </div>
+                <div class="compare-pair">
+                    <div class="form-group"><label>السنة الأولى</label><select id="cmp-y1" disabled><option value="">--</option></select></div>
+                    <span class="vs">VS</span>
+                    <div class="form-group"><label>السنة الثانية</label><select id="cmp-y2" disabled><option value="">--</option></select></div>
+                </div>
+            </div>
+
+            <div id="cmp-progs-form" class="cmp-form hidden">
+                <div class="form-group full">
+                    <label>السنة الدراسية</label>
+                    <select id="cmp-year"><option value="">-- اختر --</option></select>
+                </div>
+                <div class="compare-pair">
+                    <div class="form-group"><label>البرنامج الأول</label><select id="cmp-p1" disabled><option value="">--</option></select></div>
+                    <span class="vs">VS</span>
+                    <div class="form-group"><label>البرنامج الثاني</label><select id="cmp-p2" disabled><option value="">--</option></select></div>
+                </div>
+            </div>
+
+            <button id="cmp-btn" class="btn-primary" disabled>عرض المقارنة</button>
+        </div>
+
+        <div id="cmp-results" class="hidden">
+            <div class="card">
+                <div class="cmp-header">
+                    <h3>نتائج المقارنة</h3>
+                    <div class="export-btns">
+                        <button class="btn-sm" onclick="exportComparePDF()">PDF</button>
+                        <button class="btn-sm" onclick="exportCompareExcel()">Excel</button>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="data-table cmp-table">
+                        <thead><tr>
+                            <th>المؤشر</th>
+                            <th id="cmp-th1">-</th>
+                            <th id="cmp-th2">-</th>
+                            <th>الفرق</th>
+                        </tr></thead>
+                        <tbody id="cmp-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3>المقارنة البصرية</h3>
+                <div class="chart-wrap"><canvas id="chart-compare"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<div class="status-bar">
+    <span class="dot" id="status-dot"></span>
+    <span id="status-text">جاري التحميل...</span>
+</div>
+
+<footer class="footer">
+    <p>&copy; كلية الشريعة والأنظمة - جامعة الطائف</p>
+</footer>
+
+<script src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,881 @@
+/**
+ * مؤشرات الأداء - كلية الشريعة والأنظمة
+ * الإصدار 3.0 - لوحة معلومات احترافية
+ */
+
+// ========================================
+// الثوابت
+// ========================================
+const DISPLAY_YEARS = [39, 40, 41, 42, 44, 45, 46, 47];
+const CHART_COLORS = [
+    '#0d8e8e','#c9a227','#3b82f6','#ef4444','#10b981',
+    '#8b5cf6','#ec4899','#f97316','#06b6d4','#6366f1',
+    '#22c55e','#eab308','#14b8a6','#e11d48','#7c3aed','#0ea5e9'
+];
+const INDICATORS = [
+    { id:1,  name:"تقويم الطالب لجودة خبرات التعلم", unit:"درجة", key:"experience_eval", numeric:true },
+    { id:2,  name:"تقييم الطالب لجودة المقررات",     unit:"درجة", key:"course_eval",     numeric:true },
+    { id:3,  name:"معدّل التخرج بالوقت المحدد",      unit:"%",    key:"graduation_rate", numeric:true },
+    { id:4,  name:"معدّل استبقاء طلاب السنة الأولى",  unit:"%",    key:"retention_rate",  numeric:true },
+    { id:5,  name:"مستوى أداء الطالب",                unit:"%",    key:"student_performance", numeric:true },
+    { id:6,  name:"توظيف الخريجين",                   unit:"%",    key:"employment_rate", numeric:true },
+    { id:7,  name:"تقويم جهات التوظيف",               unit:"درجة", key:"employer_eval",   numeric:true },
+    { id:8,  name:"نسبة الطلاب/هيئة التدريس",         unit:"نسبة", key:"student_faculty_ratio" },
+    { id:9,  name:"نسبة النشر العلمي",                unit:"%",    key:"publication_pct", numeric:true },
+    { id:10, name:"البحوث/عضو هيئة تدريس",           unit:"بحث",  key:"research_per_faculty", numeric:true },
+    { id:11, name:"الاقتباسات/عضو هيئة تدريس",       unit:"اقتباس", key:"citations_per_faculty", numeric:true },
+    { id:12, name:"نسبة نشر طلاب الدراسات العليا",   unit:"%",    key:"student_publication", numeric:true, gradOnly:true },
+    { id:13, name:"براءات الاختراع",                  unit:"براءة", key:"patents", numeric:true, gradOnly:true },
+];
+
+// ========================================
+// البيانات
+// ========================================
+let allRows = [];      // raw rows from CSV
+let programs = [];     // organized {name, degree, dept, years:{y: data}}
+let charts = {};       // Chart instances
+let currentProg = null;// for export
+
+// ========================================
+// المساعدات
+// ========================================
+function fmtYear(y) {
+    if (!y) return '';
+    const n = parseInt(y);
+    return n < 100 ? '14' + String(n).padStart(2,'0') : String(n);
+}
+function shortYear(y) {
+    const n = parseInt(y);
+    return n >= 1400 ? n % 100 : n;
+}
+function fmtNum(n) {
+    return n != null ? n.toLocaleString('ar-SA') : '—';
+}
+function pct(num, den) {
+    if (!den || den === 0) return null;
+    return Math.round((num / den) * 1000) / 10;
+}
+function rateBadge(val) {
+    if (val == null) return '<span class="rate-na">—</span>';
+    const cls = val >= 70 ? 'rate-high' : val >= 40 ? 'rate-mid' : 'rate-low';
+    return `<span class="rate-badge ${cls}">${val.toFixed(1)}%</span>`;
+}
+function destroyChart(id) {
+    if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+// ========================================
+// تحميل وتحليل البيانات
+// ========================================
+async function loadData() {
+    const dot = document.getElementById('status-dot');
+    const txt = document.getElementById('status-text');
+    try {
+        const res = await fetch('data/data.csv?t=' + Date.now());
+        const csv = await res.text();
+        allRows = parseCSV(csv);
+        programs = buildPrograms(allRows);
+        dot.className = 'dot ok';
+        txt.textContent = `تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`;
+        return true;
+    } catch (e) {
+        console.error(e);
+        dot.className = 'dot err';
+        txt.textContent = 'خطأ في تحميل البيانات';
+        return false;
+    }
+}
+
+function parseCSV(text) {
+    const lines = text.trim().split('\n').map(l => l.replace(/\r/g,''));
+    if (lines.length < 2) return [];
+    const sep = lines[0].includes(';') ? ';' : ',';
+    const headers = lines[0].split(sep).map(h => h.trim().replace(/^\uFEFF/,''));
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(sep);
+        if (vals.length < 5) continue;
+        const row = {};
+        headers.forEach((h, j) => { row[h] = (vals[j] || '').trim(); });
+        // convert numbers
+        const numFields = [
+            'students_total','students_male','students_female','students_saudi','students_international',
+            'students_new','students_retained','graduates_total','graduates_ontime',
+            'prev_new_count','new_4_ago_count',
+            'sections_total','sections_male','sections_female',
+            'faculty_total','faculty_phd','faculty_male','faculty_female','faculty_published',
+            'research_count','citations',
+            'eval_courses','eval_experience','eval_employers',
+            'performance_rate','employment_rate'
+        ];
+        numFields.forEach(f => { row[f] = parseFloat(row[f]) || 0; });
+        row.Semester = parseInt(row.Semester) || 0;
+        // skip year 38 (base year only)
+        if (row.Semester === 38) continue;
+        rows.push(row);
+    }
+    return rows;
+}
+
+function buildPrograms(rows) {
+    const map = {};
+    rows.forEach(r => {
+        const key = `${r.Major_aName}|${r.Degree_aName}`;
+        if (!map[key]) {
+            map[key] = { name: r.Major_aName, degree: r.Degree_aName, dept: r.Dept_aName, years: {} };
+        }
+        map[key].years[r.Semester] = r;
+    });
+    return Object.values(map).sort((a,b) => {
+        const degOrder = {'بكالوريوس':0,'الماجستير':1,'دكتوراه':2};
+        const da = degOrder[a.degree] ?? 9, db = degOrder[b.degree] ?? 9;
+        if (da !== db) return da - db;
+        return a.name.localeCompare(b.name, 'ar');
+    });
+}
+
+function getYearData(year) {
+    return programs.map(p => ({prog: p, data: p.years[year]})).filter(x => x.data);
+}
+
+function getAvailableYears() {
+    const s = new Set();
+    programs.forEach(p => Object.keys(p.years).forEach(y => s.add(parseInt(y))));
+    return [...s].filter(y => DISPLAY_YEARS.includes(y)).sort((a,b)=>a-b);
+}
+
+// ========================================
+// حساب المؤشرات
+// ========================================
+function calcKPIs(d, degree) {
+    const kpi = {};
+    kpi.experience_eval = d.eval_experience || null;
+    kpi.course_eval = d.eval_courses || null;
+    kpi.employer_eval = d.eval_employers || null;
+    kpi.student_performance = d.performance_rate || null;
+    kpi.employment_rate = d.employment_rate || null;
+
+    // معدل التخرج بالوقت المحدد
+    kpi.graduation_rate = pct(d.graduates_ontime, d.new_4_ago_count);
+
+    // معدل الاستبقاء
+    kpi.retention_rate = pct(d.students_retained, d.prev_new_count);
+
+    // نسبة الطلاب/هيئة التدريس
+    if (d.faculty_total > 0 && d.students_total > 0) {
+        kpi.student_faculty_ratio = `1:${Math.round(d.students_total / d.faculty_total)}`;
+    } else {
+        kpi.student_faculty_ratio = null;
+    }
+
+    // نسبة النشر العلمي
+    kpi.publication_pct = d.faculty_total > 0 && d.faculty_published > 0
+        ? pct(d.faculty_published, d.faculty_total) : null;
+
+    // البحوث/عضو
+    kpi.research_per_faculty = d.faculty_total > 0 && d.research_count > 0
+        ? Math.round((d.research_count / d.faculty_total) * 100) / 100 : null;
+
+    // الاقتباسات/عضو
+    kpi.citations_per_faculty = d.faculty_total > 0 && d.citations > 0
+        ? Math.round((d.citations / d.faculty_total) * 10) / 10 : null;
+
+    kpi.student_publication = null;
+    kpi.patents = null;
+
+    return kpi;
+}
+
+function fmtKPI(val, unit) {
+    if (val == null) return { text: 'غير متوفر', cls: 'na' };
+    if (unit === '%') return { text: val.toFixed(1) + '%', cls: '' };
+    if (unit === 'درجة') return { text: parseFloat(val).toFixed(2), cls: '' };
+    return { text: String(val), cls: '' };
+}
+
+// ========================================
+// لوحة المعلومات
+// ========================================
+function initDashboard() {
+    const sel = document.getElementById('dash-year');
+    const years = getAvailableYears();
+    sel.innerHTML = years.map(y =>
+        `<option value="${y}" ${y === years[years.length-1] ? 'selected' : ''}>${fmtYear(y)}</option>`
+    ).join('');
+    sel.addEventListener('change', () => renderDashboard(parseInt(sel.value)));
+    renderDashboard(years[years.length - 1]);
+}
+
+function renderDashboard(year) {
+    const items = getYearData(year);
+    renderSummary(items, year);
+    renderStudentsChart(items);
+    renderRatesChart(items, year);
+    renderGenderChart(items);
+    renderFlowChart(items);
+    renderProgramsTable(items, year);
+}
+
+function renderSummary(items, year) {
+    const totalStudents = items.reduce((s,x) => s + x.data.students_total, 0);
+    const totalGrads = items.reduce((s,x) => s + x.data.graduates_total, 0);
+    const totalNew = items.reduce((s,x) => s + x.data.students_new, 0);
+    const totalRetained = items.reduce((s,x) => s + x.data.students_retained, 0);
+    const totalPrevNew = items.reduce((s,x) => s + x.data.prev_new_count, 0);
+    const avgRetention = totalPrevNew > 0 ? pct(totalRetained, totalPrevNew) : null;
+
+    document.getElementById('summary-row').innerHTML = `
+        <div class="summary-card">
+            <div class="sc-icon">📚</div>
+            <div class="sc-value">${items.length}</div>
+            <div class="sc-label">برنامج أكاديمي</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-icon">👥</div>
+            <div class="sc-value">${fmtNum(totalStudents)}</div>
+            <div class="sc-label">طالب منتظم</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-icon">🎓</div>
+            <div class="sc-value">${fmtNum(totalGrads)}</div>
+            <div class="sc-label">خريج</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-icon">🆕</div>
+            <div class="sc-value">${fmtNum(totalNew)}</div>
+            <div class="sc-label">طالب مستجد</div>
+        </div>
+        <div class="summary-card">
+            <div class="sc-icon">📊</div>
+            <div class="sc-value">${avgRetention != null ? avgRetention.toFixed(1) + '%' : '—'}</div>
+            <div class="sc-label">متوسط الاستبقاء</div>
+        </div>
+    `;
+}
+
+function renderStudentsChart(items) {
+    destroyChart('students');
+    const sorted = [...items].sort((a,b) => b.data.students_total - a.data.students_total);
+    const labels = sorted.map(x => x.prog.name + ' (' + x.prog.degree + ')');
+    const data = sorted.map(x => x.data.students_total);
+    const ctx = document.getElementById('chart-students').getContext('2d');
+    charts.students = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data,
+                backgroundColor: sorted.map((_,i) => CHART_COLORS[i % CHART_COLORS.length]),
+                borderRadius: 4,
+                barThickness: 18,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#f0f0f0' }, ticks: { font: { family: 'Tajawal' } } },
+                y: { ticks: { font: { family: 'Tajawal', size: 11 } } }
+            }
+        }
+    });
+}
+
+function renderRatesChart(items, year) {
+    destroyChart('rates');
+    const wrap = document.getElementById('chart-rates-wrap');
+    wrap.innerHTML = '<canvas id="chart-rates"></canvas>';
+    const withRates = items.filter(x => {
+        const gr = pct(x.data.graduates_ontime, x.data.new_4_ago_count);
+        const rr = pct(x.data.students_retained, x.data.prev_new_count);
+        return gr != null || rr != null;
+    });
+    if (withRates.length === 0) {
+        wrap.innerHTML = '<p style="text-align:center;color:#999;padding:40px;">لا توجد بيانات معدلات لهذه السنة</p>';
+        return;
+    }
+    const labels = withRates.map(x => x.prog.name + ' (' + x.prog.degree + ')');
+    const gradRates = withRates.map(x => pct(x.data.graduates_ontime, x.data.new_4_ago_count) || 0);
+    const retRates = withRates.map(x => pct(x.data.students_retained, x.data.prev_new_count) || 0);
+    const ctx = document.getElementById('chart-rates').getContext('2d');
+    charts.rates = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'معدل التخرج بالوقت', data: gradRates, backgroundColor: '#0d8e8e', borderRadius: 4, barThickness: 14 },
+                { label: 'معدل الاستبقاء', data: retRates, backgroundColor: '#c9a227', borderRadius: 4, barThickness: 14 },
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top', labels: { font: { family: 'Tajawal' } } },
+                tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + ctx.parsed.x.toFixed(1) + '%' } }
+            },
+            scales: {
+                x: { max: 100, grid: { color: '#f0f0f0' }, ticks: { callback: v => v + '%', font: { family: 'Tajawal' } } },
+                y: { ticks: { font: { family: 'Tajawal', size: 11 } } }
+            }
+        }
+    });
+}
+
+function renderGenderChart(items) {
+    destroyChart('gender');
+    const totalMale = items.reduce((s,x) => s + x.data.students_male, 0);
+    const totalFemale = items.reduce((s,x) => s + x.data.students_female, 0);
+    const ctx = document.getElementById('chart-gender').getContext('2d');
+    charts.gender = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['ذكور', 'إناث'],
+            datasets: [{
+                data: [totalMale, totalFemale],
+                backgroundColor: ['#3b82f6', '#ec4899'],
+                borderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { font: { family: 'Tajawal', size: 13 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const total = ctx.dataset.data.reduce((a,b) => a+b, 0);
+                            const p = ((ctx.parsed / total) * 100).toFixed(1);
+                            return ctx.label + ': ' + ctx.parsed.toLocaleString('ar-SA') + ' (' + p + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function renderFlowChart(items) {
+    destroyChart('flow');
+    // Top programs by students
+    const sorted = [...items].sort((a,b) => b.data.students_total - a.data.students_total).slice(0, 10);
+    const labels = sorted.map(x => x.prog.name.length > 15 ? x.prog.name.slice(0,15) + '..' : x.prog.name);
+    const ctx = document.getElementById('chart-flow').getContext('2d');
+    charts.flow = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'المستجدون', data: sorted.map(x => x.data.students_new), backgroundColor: '#3b82f6', borderRadius: 4 },
+                { label: 'الخريجون', data: sorted.map(x => x.data.graduates_total), backgroundColor: '#10b981', borderRadius: 4 },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', labels: { font: { family: 'Tajawal' } } } },
+            scales: {
+                x: { ticks: { font: { family: 'Tajawal', size: 10 } } },
+                y: { grid: { color: '#f0f0f0' }, ticks: { font: { family: 'Tajawal' } } }
+            }
+        }
+    });
+}
+
+function renderProgramsTable(items, year) {
+    const tbody = document.getElementById('tbl-body');
+    const tfoot = document.getElementById('tbl-foot');
+    let totals = { students:0, male:0, female:0, newS:0, grads:0 };
+
+    tbody.innerHTML = items.map((x, idx) => {
+        const d = x.data;
+        totals.students += d.students_total;
+        totals.male += d.students_male;
+        totals.female += d.students_female;
+        totals.newS += d.students_new;
+        totals.grads += d.graduates_total;
+        const gr = pct(d.graduates_ontime, d.new_4_ago_count);
+        const rr = pct(d.students_retained, d.prev_new_count);
+        // find program index
+        const pIdx = programs.indexOf(x.prog);
+        return `<tr class="clickable-row" data-pidx="${pIdx}" data-year="${year}">
+            <td>${x.prog.name}</td>
+            <td>${x.prog.degree}</td>
+            <td>${x.prog.dept}</td>
+            <td>${fmtNum(d.students_total)}</td>
+            <td>${fmtNum(d.students_male)}</td>
+            <td>${fmtNum(d.students_female)}</td>
+            <td>${fmtNum(d.students_new)}</td>
+            <td>${fmtNum(d.graduates_total)}</td>
+            <td>${rateBadge(rr)}</td>
+            <td>${rateBadge(gr)}</td>
+        </tr>`;
+    }).join('');
+
+    tfoot.innerHTML = `<tr>
+        <td colspan="3">الإجمالي</td>
+        <td>${fmtNum(totals.students)}</td>
+        <td>${fmtNum(totals.male)}</td>
+        <td>${fmtNum(totals.female)}</td>
+        <td>${fmtNum(totals.newS)}</td>
+        <td>${fmtNum(totals.grads)}</td>
+        <td colspan="2"></td>
+    </tr>`;
+
+    // Click to navigate to program detail
+    tbody.querySelectorAll('.clickable-row').forEach(tr => {
+        tr.addEventListener('click', () => {
+            const pidx = tr.dataset.pidx;
+            const yr = tr.dataset.year;
+            switchView('program');
+            document.getElementById('prog-select').value = pidx;
+            fillProgYears(parseInt(pidx));
+            document.getElementById('prog-year').value = yr;
+            document.getElementById('prog-show').disabled = false;
+            showProgramDetail();
+        });
+    });
+}
+
+// ========================================
+// تفاصيل البرنامج
+// ========================================
+function initProgramView() {
+    const sel = document.getElementById('prog-select');
+    sel.innerHTML = '<option value="">-- اختر البرنامج --</option>' +
+        programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree})</option>`).join('');
+
+    sel.addEventListener('change', () => {
+        const v = sel.value;
+        document.getElementById('prog-results').classList.add('hidden');
+        if (v !== '') {
+            fillProgYears(parseInt(v));
+        } else {
+            document.getElementById('prog-year').disabled = true;
+            document.getElementById('prog-show').disabled = true;
+        }
+    });
+
+    document.getElementById('prog-year').addEventListener('change', e => {
+        document.getElementById('prog-show').disabled = !e.target.value;
+    });
+
+    document.getElementById('prog-show').addEventListener('click', showProgramDetail);
+}
+
+function fillProgYears(idx) {
+    const yearSel = document.getElementById('prog-year');
+    const p = programs[idx];
+    const years = Object.keys(p.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort();
+    yearSel.innerHTML = '<option value="">-- اختر --</option>' +
+        years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+    yearSel.disabled = false;
+    document.getElementById('prog-show').disabled = true;
+}
+
+function showProgramDetail() {
+    const idx = parseInt(document.getElementById('prog-select').value);
+    const year = parseInt(document.getElementById('prog-year').value);
+    if (isNaN(idx) || isNaN(year)) return;
+
+    const prog = programs[idx];
+    const d = prog.years[year];
+    if (!d) return;
+
+    currentProg = { prog, year, data: d };
+
+    // Header
+    document.getElementById('prog-badge').textContent = prog.degree;
+    document.getElementById('prog-name').textContent = prog.name;
+    document.getElementById('prog-year-label').textContent = 'السنة: ' + fmtYear(year) + ' | القسم: ' + prog.dept;
+
+    // Stats
+    const stats = [];
+    if (d.students_total > 0) stats.push({icon:'👥', label:'إجمالي الطلاب', value: fmtNum(d.students_total), color:'var(--primary)'});
+    if (d.students_male > 0) stats.push({icon:'👨', label:'الذكور', value: fmtNum(d.students_male), color:'#3b82f6'});
+    if (d.students_female > 0) stats.push({icon:'👩', label:'الإناث', value: fmtNum(d.students_female), color:'#ec4899'});
+    if (d.students_saudi > 0) stats.push({icon:'🇸🇦', label:'السعوديون', value: fmtNum(d.students_saudi), color:'#059669'});
+    if (d.students_international > 0) stats.push({icon:'🌍', label:'الدوليون', value: fmtNum(d.students_international), color:'#f97316'});
+    if (d.students_new > 0) stats.push({icon:'🆕', label:'المستجدون', value: fmtNum(d.students_new), color:'#06b6d4'});
+    if (d.students_retained > 0) stats.push({icon:'🔄', label:'المستبقون', value: fmtNum(d.students_retained), color:'#8b5cf6'});
+    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'الخريجون', value: fmtNum(d.graduates_total), color:'#10b981'});
+    if (d.graduates_ontime > 0) stats.push({icon:'⏱️', label:'خريجون بالوقت', value: fmtNum(d.graduates_ontime), color:'#0d8e8e'});
+    if (d.sections_total > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(d.sections_total), color:'#6b7280'});
+    if (d.faculty_total > 0) stats.push({icon:'👨‍🏫', label:'هيئة التدريس', value: fmtNum(d.faculty_total), color:'#7c3aed'});
+    if (d.research_count > 0) stats.push({icon:'📚', label:'الأبحاث', value: fmtNum(d.research_count), color:'#eab308'});
+    if (d.citations > 0) stats.push({icon:'📎', label:'الاقتباسات', value: fmtNum(d.citations), color:'#14b8a6'});
+
+    document.getElementById('stats-grid').innerHTML = stats.map(s =>
+        `<div class="stat-card" style="border-right-color:${s.color}">
+            <div class="stat-icon">${s.icon}</div>
+            <div class="stat-info">
+                <div class="stat-label">${s.label}</div>
+                <div class="stat-value">${s.value}</div>
+            </div>
+        </div>`
+    ).join('');
+
+    // KPIs
+    const kpi = calcKPIs(d, prog.degree);
+    document.getElementById('kpi-grid').innerHTML = INDICATORS
+        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(prog.degree))
+        .map(ind => {
+            const v = kpi[ind.key];
+            const f = fmtKPI(v, ind.unit);
+            return `<div class="kpi-card">
+                <div class="kpi-num">${ind.id}</div>
+                <div class="kpi-body">
+                    <div class="kpi-name">${ind.name}</div>
+                    <div class="kpi-val ${f.cls}">${f.text} <span class="kpi-unit">${v != null ? ind.unit : ''}</span></div>
+                </div>
+            </div>`;
+        }).join('');
+
+    // Trend chart
+    renderTrendChart(prog);
+
+    document.getElementById('prog-results').classList.remove('hidden');
+    document.getElementById('prog-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderTrendChart(prog) {
+    destroyChart('trend');
+    const years = Object.keys(prog.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort();
+    const labels = years.map(y => fmtYear(y));
+    const students = years.map(y => prog.years[y].students_total);
+    const grads = years.map(y => prog.years[y].graduates_total);
+    const newS = years.map(y => prog.years[y].students_new);
+
+    const ctx = document.getElementById('chart-trend').getContext('2d');
+    charts.trend = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'الطلاب المنتظمون', data: students, borderColor: '#0d8e8e', backgroundColor: 'rgba(13,142,142,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
+                { label: 'الخريجون', data: grads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
+                { label: 'المستجدون', data: newS, borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', labels: { font: { family: 'Tajawal' } } } },
+            scales: {
+                x: { ticks: { font: { family: 'Tajawal' } } },
+                y: { beginAtZero: true, grid: { color: '#f0f0f0' }, ticks: { font: { family: 'Tajawal' } } }
+            }
+        }
+    });
+}
+
+// ========================================
+// المقارنة
+// ========================================
+function initCompare() {
+    // fill selects
+    const progOpts = '<option value="">-- اختر --</option>' +
+        programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree})</option>`).join('');
+    document.getElementById('cmp-prog').innerHTML = progOpts;
+    document.getElementById('cmp-p1').innerHTML = progOpts;
+    document.getElementById('cmp-p2').innerHTML = progOpts;
+
+    const yearOpts = '<option value="">-- اختر --</option>' +
+        getAvailableYears().map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+    document.getElementById('cmp-year').innerHTML = yearOpts;
+
+    // Mode toggle
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('cmp-years-form').classList.toggle('hidden', btn.dataset.mode !== 'years');
+            document.getElementById('cmp-progs-form').classList.toggle('hidden', btn.dataset.mode !== 'progs');
+            document.getElementById('cmp-results').classList.add('hidden');
+            document.getElementById('cmp-btn').disabled = true;
+        });
+    });
+
+    // Years mode
+    document.getElementById('cmp-prog').addEventListener('change', e => {
+        if (e.target.value !== '') {
+            const idx = parseInt(e.target.value);
+            const p = programs[idx];
+            const years = Object.keys(p.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort();
+            const opts = '<option value="">--</option>' + years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+            document.getElementById('cmp-y1').innerHTML = opts;
+            document.getElementById('cmp-y2').innerHTML = opts;
+            document.getElementById('cmp-y1').disabled = false;
+            document.getElementById('cmp-y2').disabled = false;
+        }
+        updateCmpBtn();
+    });
+
+    // Programs mode
+    document.getElementById('cmp-year').addEventListener('change', e => {
+        if (e.target.value) {
+            const yr = parseInt(e.target.value);
+            const avail = programs.filter(p => p.years[yr]);
+            const opts = '<option value="">--</option>' + avail.map((p,i) => {
+                const realIdx = programs.indexOf(p);
+                return `<option value="${realIdx}">${p.name} (${p.degree})</option>`;
+            }).join('');
+            document.getElementById('cmp-p1').innerHTML = opts;
+            document.getElementById('cmp-p2').innerHTML = opts;
+            document.getElementById('cmp-p1').disabled = false;
+            document.getElementById('cmp-p2').disabled = false;
+        }
+        updateCmpBtn();
+    });
+
+    ['cmp-y1','cmp-y2','cmp-p1','cmp-p2'].forEach(id => {
+        document.getElementById(id).addEventListener('change', updateCmpBtn);
+    });
+
+    document.getElementById('cmp-btn').addEventListener('click', showComparison);
+}
+
+function updateCmpBtn() {
+    const mode = document.querySelector('.mode-btn.active').dataset.mode;
+    let valid = false;
+    if (mode === 'years') {
+        const p = document.getElementById('cmp-prog').value;
+        const y1 = document.getElementById('cmp-y1').value;
+        const y2 = document.getElementById('cmp-y2').value;
+        valid = p && y1 && y2 && y1 !== y2;
+    } else {
+        const yr = document.getElementById('cmp-year').value;
+        const p1 = document.getElementById('cmp-p1').value;
+        const p2 = document.getElementById('cmp-p2').value;
+        valid = yr && p1 && p2 && p1 !== p2;
+    }
+    document.getElementById('cmp-btn').disabled = !valid;
+}
+
+function showComparison() {
+    const mode = document.querySelector('.mode-btn.active').dataset.mode;
+    let d1, d2, t1, t2, deg;
+
+    if (mode === 'years') {
+        const pIdx = parseInt(document.getElementById('cmp-prog').value);
+        const y1 = parseInt(document.getElementById('cmp-y1').value);
+        const y2 = parseInt(document.getElementById('cmp-y2').value);
+        const p = programs[pIdx];
+        d1 = p.years[y1]; d2 = p.years[y2];
+        t1 = fmtYear(y1); t2 = fmtYear(y2);
+        deg = p.degree;
+    } else {
+        const yr = parseInt(document.getElementById('cmp-year').value);
+        const p1 = programs[parseInt(document.getElementById('cmp-p1').value)];
+        const p2 = programs[parseInt(document.getElementById('cmp-p2').value)];
+        d1 = p1.years[yr]; d2 = p2.years[yr];
+        t1 = p1.name; t2 = p2.name;
+        deg = p1.degree;
+    }
+
+    if (!d1 || !d2) return alert('لا توجد بيانات كافية');
+
+    const kpi1 = calcKPIs(d1, deg);
+    const kpi2 = calcKPIs(d2, deg);
+
+    document.getElementById('cmp-th1').textContent = t1;
+    document.getElementById('cmp-th2').textContent = t2;
+
+    const tbody = document.getElementById('cmp-tbody');
+    const chartLabels = [];
+    const chartData1 = [];
+    const chartData2 = [];
+
+    tbody.innerHTML = INDICATORS
+        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(deg))
+        .map(ind => {
+            const v1 = kpi1[ind.key];
+            const v2 = kpi2[ind.key];
+            const f1 = fmtKPI(v1, ind.unit);
+            const f2 = fmtKPI(v2, ind.unit);
+
+            let diffHtml = '<span class="diff-same">—</span>';
+            if (ind.numeric && v1 != null && v2 != null) {
+                const diff = parseFloat(v1) - parseFloat(v2);
+                if (diff > 0) diffHtml = `<span class="diff-up">+${diff.toFixed(2)}</span>`;
+                else if (diff < 0) diffHtml = `<span class="diff-down">${diff.toFixed(2)}</span>`;
+                else diffHtml = `<span class="diff-same">0</span>`;
+
+                chartLabels.push(ind.name.length > 20 ? ind.name.slice(0,20) + '..' : ind.name);
+                chartData1.push(parseFloat(v1));
+                chartData2.push(parseFloat(v2));
+            }
+
+            return `<tr>
+                <td>${ind.name}</td>
+                <td>${f1.text}</td>
+                <td>${f2.text}</td>
+                <td>${diffHtml}</td>
+            </tr>`;
+        }).join('');
+
+    // Compare chart
+    destroyChart('compare');
+    if (chartLabels.length > 0) {
+        const ctx = document.getElementById('chart-compare').getContext('2d');
+        charts.compare = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: chartLabels,
+                datasets: [
+                    { label: t1, data: chartData1, backgroundColor: '#0d8e8e', borderRadius: 4 },
+                    { label: t2, data: chartData2, backgroundColor: '#c9a227', borderRadius: 4 },
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { font: { family: 'Tajawal' } } } },
+                scales: {
+                    x: { ticks: { font: { family: 'Tajawal', size: 10 }, maxRotation: 45 } },
+                    y: { grid: { color: '#f0f0f0' }, ticks: { font: { family: 'Tajawal' } } }
+                }
+            }
+        });
+    }
+
+    // Store for export
+    currentProg = { cmp: true, d1, d2, t1, t2, deg, kpi1, kpi2 };
+    document.getElementById('cmp-results').classList.remove('hidden');
+    document.getElementById('cmp-results').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ========================================
+// التصدير
+// ========================================
+function exportPDF() {
+    if (!currentProg || currentProg.cmp) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const d = currentProg.data;
+    const kpi = calcKPIs(d, currentProg.prog.degree);
+
+    doc.setFontSize(16);
+    doc.text('KPI - ' + currentProg.prog.name + ' (' + currentProg.prog.degree + ')', 105, 20, { align: 'center' });
+    doc.setFontSize(12);
+    doc.text(fmtYear(currentProg.year), 105, 28, { align: 'center' });
+
+    const body = INDICATORS
+        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.prog.degree))
+        .map(ind => {
+            const f = fmtKPI(kpi[ind.key], ind.unit);
+            return [ind.name, f.text, ind.unit];
+        });
+
+    doc.autoTable({
+        startY: 35,
+        head: [['Indicator','Value','Unit']],
+        body,
+        styles: { halign: 'center', fontSize: 9 },
+        headStyles: { fillColor: [13,110,110] }
+    });
+    doc.save(`KPI-${currentProg.prog.name}-${fmtYear(currentProg.year)}.pdf`);
+}
+
+function exportExcel() {
+    if (!currentProg || currentProg.cmp) return;
+    const d = currentProg.data;
+    const kpi = calcKPIs(d, currentProg.prog.degree);
+    const rows = [
+        ['تقرير مؤشرات الأداء'],
+        ['البرنامج: ' + currentProg.prog.name],
+        ['الدرجة: ' + currentProg.prog.degree],
+        ['السنة: ' + fmtYear(currentProg.year)],
+        [],
+        ['المؤشر','القيمة','الوحدة'],
+        ...INDICATORS
+            .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.prog.degree))
+            .map(ind => {
+                const f = fmtKPI(kpi[ind.key], ind.unit);
+                return [ind.name, f.text, ind.unit];
+            })
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'المؤشرات');
+    XLSX.writeFile(wb, `مؤشرات-${currentProg.prog.name}-${fmtYear(currentProg.year)}.xlsx`);
+}
+
+function exportComparePDF() {
+    if (!currentProg || !currentProg.cmp) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    doc.setFontSize(14);
+    doc.text('KPI Comparison', 105, 20, { align: 'center' });
+
+    const body = INDICATORS
+        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.deg))
+        .map(ind => {
+            const f1 = fmtKPI(currentProg.kpi1[ind.key], ind.unit);
+            const f2 = fmtKPI(currentProg.kpi2[ind.key], ind.unit);
+            return [ind.name, f1.text, f2.text];
+        });
+
+    doc.autoTable({
+        startY: 30,
+        head: [['Indicator', currentProg.t1, currentProg.t2]],
+        body,
+        styles: { halign: 'center', fontSize: 9 },
+        headStyles: { fillColor: [13,110,110] }
+    });
+    doc.save('KPI-Comparison.pdf');
+}
+
+function exportCompareExcel() {
+    if (!currentProg || !currentProg.cmp) return;
+    const rows = [
+        ['مقارنة المؤشرات'],
+        [],
+        ['المؤشر', currentProg.t1, currentProg.t2],
+        ...INDICATORS
+            .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.deg))
+            .map(ind => {
+                const f1 = fmtKPI(currentProg.kpi1[ind.key], ind.unit);
+                const f2 = fmtKPI(currentProg.kpi2[ind.key], ind.unit);
+                return [ind.name, f1.text, f2.text];
+            })
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'المقارنة');
+    XLSX.writeFile(wb, 'مقارنة-المؤشرات.xlsx');
+}
+
+// ========================================
+// التنقل بين العروض
+// ========================================
+function switchView(viewName) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(viewName + '-view').classList.add('active');
+    document.querySelector(`.nav-btn[data-view="${viewName}"]`).classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ========================================
+// التهيئة
+// ========================================
+document.addEventListener('DOMContentLoaded', async () => {
+    // Navigation
+    document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+        btn.addEventListener('click', () => switchView(btn.dataset.view));
+    });
+
+    // Load data
+    const ok = await loadData();
+    if (!ok) return;
+
+    // Init views
+    initDashboard();
+    initProgramView();
+    initCompare();
+});
