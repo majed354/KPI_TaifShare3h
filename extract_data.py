@@ -38,10 +38,16 @@ def get_year_n_before(year, n):
     """الحصول على السنة قبل n سنوات حقيقية (بالحساب الفعلي وليس بالفهرس)
     مثال: سنة 1446 قبل 4 سنوات = 1442 (وليس 1441)
     لأن 1443 غير موجودة (مدمجة) لكن الفارق الزمني الحقيقي هو 4 سنوات
+    إذا وقعت السنة المستهدفة على سنة غير موجودة (مثل 1443)
+    نرجع لأقرب سنة متاحة قبلها (1442)
     """
     target = year - n
     if target in YEAR_SEQUENCE:
         return target
+    # سنة 1443 مدمجة → نرجع لأقرب سنة متاحة قبلها
+    candidates = [y for y in YEAR_SEQUENCE if y <= target]
+    if candidates:
+        return max(candidates)
     return None
 
 # تطبيع الدرجة العلمية
