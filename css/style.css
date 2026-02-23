@@ -424,6 +424,7 @@ body {
 }
 .kpi-val.na { color: var(--text-light); font-weight: 400; font-size: 0.85rem; }
 .kpi-unit { font-size: 0.72rem; color: var(--text-light); font-weight: 400; }
+.kpi-detail { font-size: 0.78rem; color: var(--accent); font-weight: 600; margin-top: 1px; }
 
 /* ============================
    المقارنة

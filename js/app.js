@@ -157,9 +157,11 @@ function calcKPIs(d, degree) {
 
     // معدل التخرج بالوقت المحدد
     kpi.graduation_rate = pct(d.graduates_ontime, d.new_4_ago_count);
+    kpi.graduation_detail = d.new_4_ago_count > 0 ? `${d.graduates_ontime} من ${d.new_4_ago_count}` : null;
 
     // معدل الاستبقاء
     kpi.retention_rate = pct(d.students_retained, d.prev_new_count);
+    kpi.retention_detail = d.prev_new_count > 0 ? `${d.students_retained} من ${d.prev_new_count}` : null;
 
     // نسبة الطلاب/هيئة التدريس
     if (d.faculty_total > 0 && d.students_total > 0) {
@@ -400,6 +402,8 @@ function renderProgramsTable(items, year) {
         totals.grads += d.graduates_total;
         const gr = pct(d.graduates_ontime, d.new_4_ago_count);
         const rr = pct(d.students_retained, d.prev_new_count);
+        const retainedText = d.prev_new_count > 0 ? `${fmtNum(d.students_retained)} من ${fmtNum(d.prev_new_count)}` : '';
+        const ontimeText = d.new_4_ago_count > 0 ? `${fmtNum(d.graduates_ontime)} من ${fmtNum(d.new_4_ago_count)}` : '';
         // find program index
         const pIdx = programs.indexOf(x.prog);
         return `<tr class="clickable-row" data-pidx="${pIdx}" data-year="${year}">
@@ -411,8 +415,8 @@ function renderProgramsTable(items, year) {
             <td>${fmtNum(d.students_female)}</td>
             <td>${fmtNum(d.students_new)}</td>
             <td>${fmtNum(d.graduates_total)}</td>
-            <td>${rateBadge(rr)}</td>
-            <td>${rateBadge(gr)}</td>
+            <td title="${retainedText}">${rateBadge(rr)}</td>
+            <td title="${ontimeText}">${rateBadge(gr)}</td>
         </tr>`;
     }).join('');
 
@@ -501,9 +505,9 @@ function showProgramDetail() {
     if (d.students_saudi > 0) stats.push({icon:'🇸🇦', label:'السعوديون', value: fmtNum(d.students_saudi), color:'#059669'});
     if (d.students_international > 0) stats.push({icon:'🌍', label:'الدوليون', value: fmtNum(d.students_international), color:'#f97316'});
     if (d.students_new > 0) stats.push({icon:'🆕', label:'المستجدون', value: fmtNum(d.students_new), color:'#06b6d4'});
-    if (d.students_retained > 0) stats.push({icon:'🔄', label:'المستبقون', value: fmtNum(d.students_retained), color:'#8b5cf6'});
-    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'الخريجون', value: fmtNum(d.graduates_total), color:'#10b981'});
-    if (d.graduates_ontime > 0) stats.push({icon:'⏱️', label:'خريجون بالوقت', value: fmtNum(d.graduates_ontime), color:'#0d8e8e'});
+    if (d.students_retained > 0 || d.prev_new_count > 0) stats.push({icon:'🔄', label:'استبقاء الدفعة السابقة', value: d.prev_new_count > 0 ? fmtNum(d.students_retained) + ' من ' + fmtNum(d.prev_new_count) : fmtNum(d.students_retained), color:'#8b5cf6'});
+    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجون', value: fmtNum(d.graduates_total), color:'#10b981'});
+    if (d.graduates_ontime > 0 || d.new_4_ago_count > 0) stats.push({icon:'⏱️', label:'خريجو الدفعة بالوقت', value: d.new_4_ago_count > 0 ? fmtNum(d.graduates_ontime) + ' من ' + fmtNum(d.new_4_ago_count) : fmtNum(d.graduates_ontime), color:'#0d8e8e'});
     if (d.sections_total > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(d.sections_total), color:'#6b7280'});
     if (d.faculty_total > 0) stats.push({icon:'👨‍🏫', label:'هيئة التدريس', value: fmtNum(d.faculty_total), color:'#7c3aed'});
     if (d.research_count > 0) stats.push({icon:'📚', label:'الأبحاث', value: fmtNum(d.research_count), color:'#eab308'});
@@ -526,11 +530,19 @@ function showProgramDetail() {
         .map(ind => {
             const v = kpi[ind.key];
             const f = fmtKPI(v, ind.unit);
+            // إضافة تفاصيل "X من Y" لمعدل التخرج والاستبقاء
+            let detailHtml = '';
+            if (ind.key === 'graduation_rate' && kpi.graduation_detail) {
+                detailHtml = `<div class="kpi-detail">(${kpi.graduation_detail})</div>`;
+            } else if (ind.key === 'retention_rate' && kpi.retention_detail) {
+                detailHtml = `<div class="kpi-detail">(${kpi.retention_detail})</div>`;
+            }
             return `<div class="kpi-card">
                 <div class="kpi-num">${ind.id}</div>
                 <div class="kpi-body">
                     <div class="kpi-name">${ind.name}</div>
                     <div class="kpi-val ${f.cls}">${f.text} <span class="kpi-unit">${v != null ? ind.unit : ''}</span></div>
+                    ${detailHtml}
                 </div>
             </div>`;
         }).join('');
