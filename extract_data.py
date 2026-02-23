@@ -341,7 +341,7 @@ def main():
     print("=" * 70)
     print("بدء استخراج البيانات من ملفات Excel")
     print("المنهجية: إجمالي الطلاب = منتظم فقط من الفصل الأول")
-    print("         الخريجون = متخرج من أي فصل في السنة")
+    print("         الخريجين = متخرج من أي فصل في السنة")
     print("=" * 70)
 
     # 1. قراءة جميع الملفات وتنظيمها حسب السنة والفصل
@@ -480,7 +480,7 @@ def main():
             students_saudi = sum(1 for s in enrolled if s['nationality'] == 'سعودي')
             students_intl = sum(1 for s in enrolled if s['nationality'] != 'سعودي' and s['nationality'])
 
-            # الخريجون من كل الفصول
+            # الخريجين من كل الفصول
             graduated = grad_groups.get((prog, degree), [])
             graduates_total = len(graduated)
 
@@ -590,7 +590,133 @@ def main():
             grad_rate = round(d['graduates_ontime'] / d['new_4_ago_count'] * 100, 1)
             print(f"    معدل التخرج بالوقت: {grad_rate}% ({d['graduates_ontime']} من {d['new_4_ago_count']})")
 
-    # 7. كتابة CSV النهائي
+    # 7. استخراج سجلات الخريجين الفردية
+    print(f"\n{'='*70}")
+    print("استخراج سجلات الخريجين الفردية...")
+    print(f"{'='*70}")
+
+    graduates_list = []
+    for year in sorted(all_semesters_students.keys()):
+        if year not in YEAR_SEQUENCE or year == 38:
+            continue
+        for sid, s in all_semesters_students[year].items():
+            if s['status'] == GRADUATED_STATUS:
+                prog = s['program']
+                if prog in EXCLUDED_PROGRAMS:
+                    continue
+                degree = DEGREE_MAP.get(s['degree'], s['degree'])
+                dept = DEPT_MAP.get(prog, prog)
+                graduates_list.append({
+                    'year': year,
+                    'student_id': sid,
+                    'name': s['name'],
+                    'program': prog,
+                    'degree': degree,
+                    'dept': dept,
+                    'gender': s['gender'],
+                    'nationality': s['nationality'],
+                    'admission_date': s.get('admission_date', ''),
+                    'grad_date': s.get('grad_date', ''),
+                    'expected_grad': s.get('expected_grad', ''),
+                    'gpa': s.get('gpa', ''),
+                })
+
+    GRADUATES_CSV = os.path.join("KPI_TaifShare3h-main", "data", "graduates_detail.csv")
+    with open(GRADUATES_CSV, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f, delimiter=';')
+        writer.writerow([
+            'السنة', 'الرقم_الجامعي', 'الاسم', 'التخصص', 'الدرجة', 'القسم',
+            'الجنس', 'الجنسية', 'تاريخ_القبول', 'تاريخ_التخرج',
+            'تاريخ_التخرج_المتوقع', 'المعدل'
+        ])
+        for g in sorted(graduates_list, key=lambda x: (x['year'], x['dept'], x['program'])):
+            writer.writerow([
+                g['year'], g['student_id'], g['name'], g['program'],
+                g['degree'], g['dept'], g['gender'], g['nationality'],
+                g['admission_date'], g['grad_date'],
+                g['expected_grad'], g['gpa']
+            ])
+    print(f"  تم كتابة {len(graduates_list)} سجل خريج في {GRADUATES_CSV}")
+
+    # 8. استخراج سجلات غير المكملين (جميع الحالات عدا منتظم ومتخرج)
+    print(f"\n{'='*70}")
+    print("استخراج سجلات غير المكملين...")
+    print(f"{'='*70}")
+
+    # نجمع كل الحالات الفريدة أولاً للطباعة
+    all_statuses = set()
+    non_completers_dict = {}  # (student_id, program, degree) -> latest record
+
+    for year in sorted(all_semesters_students.keys()):
+        if year not in YEAR_SEQUENCE or year == 38:
+            continue
+        for sid, s in all_semesters_students[year].items():
+            status = s['status']
+            all_statuses.add(status)
+
+            if status == ENROLLED_STATUS or status == GRADUATED_STATUS:
+                continue
+
+            prog = s['program']
+            if prog in EXCLUDED_PROGRAMS:
+                continue
+            degree = DEGREE_MAP.get(s['degree'], s['degree'])
+            dept = DEPT_MAP.get(prog, prog)
+
+            rec_key = (sid, prog, degree)
+            existing = non_completers_dict.get(rec_key)
+            # نحتفظ بأحدث سجل (أكبر سنة)
+            if not existing or year > existing['year']:
+                non_completers_dict[rec_key] = {
+                    'year': year,
+                    'student_id': sid,
+                    'name': s['name'],
+                    'program': prog,
+                    'degree': degree,
+                    'dept': dept,
+                    'status': status,
+                    'gender': s['gender'],
+                    'nationality': s['nationality'],
+                    'admission_date': s.get('admission_date', ''),
+                    'gpa': s.get('gpa', ''),
+                    'study_type': s.get('study_type', ''),
+                }
+
+    # استبعاد من تخرج لاحقاً (قد يكون غير مكمل في سنة ثم تخرج لاحقاً)
+    graduated_ids = set()
+    for year in all_semesters_students:
+        for sid, s in all_semesters_students[year].items():
+            if s['status'] == GRADUATED_STATUS:
+                prog = s['program']
+                degree = DEGREE_MAP.get(s['degree'], s['degree'])
+                graduated_ids.add((sid, prog, degree))
+
+    non_completers_list = [
+        rec for key, rec in non_completers_dict.items()
+        if key not in graduated_ids
+    ]
+
+    print(f"  جميع الحالات الموجودة: {all_statuses}")
+    non_comp_statuses = set(r['status'] for r in non_completers_list)
+    print(f"  حالات غير المكملين: {non_comp_statuses}")
+
+    NON_COMP_CSV = os.path.join("KPI_TaifShare3h-main", "data", "non_completers.csv")
+    with open(NON_COMP_CSV, 'w', encoding='utf-8', newline='') as f:
+        writer = csv.writer(f, delimiter=';')
+        writer.writerow([
+            'آخر_سنة', 'الرقم_الجامعي', 'الاسم', 'التخصص', 'الدرجة', 'القسم',
+            'الحالة', 'الجنس', 'الجنسية', 'تاريخ_القبول', 'المعدل', 'نوع_الدراسة'
+        ])
+        for nc in sorted(non_completers_list, key=lambda x: (x['year'], x['dept'], x['program'], x['status'])):
+            writer.writerow([
+                nc['year'], nc['student_id'], nc['name'], nc['program'],
+                nc['degree'], nc['dept'], nc['status'], nc['gender'],
+                nc['nationality'], nc['admission_date'], nc['gpa'],
+                nc['study_type']
+            ])
+    print(f"  تم كتابة {len(non_completers_list)} سجل غير مكمل في {NON_COMP_CSV}")
+
+    # 9. كتابة CSV النهائي
     print(f"\n{'='*70}")
     print(f"كتابة الملف النهائي: {OUTPUT_CSV}")
     print(f"{'='*70}")

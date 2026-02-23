@@ -14,6 +14,8 @@ from openpyxl.chart.series import SeriesLabel
 
 # ── Config ──────────────────────────────────────────────────────────────
 CSV_PATH = os.path.join('KPI_TaifShare3h-main', 'data', 'data.csv')
+GRADS_CSV = os.path.join('KPI_TaifShare3h-main', 'data', 'graduates_detail.csv')
+NONCOMP_CSV = os.path.join('KPI_TaifShare3h-main', 'data', 'non_completers.csv')
 OUT_PATH = os.path.join('KPI_TaifShare3h-main', 'data', 'KPI_Data_Complete.xlsx')
 YEAR_ORDER = [38, 39, 40, 41, 42, 44, 45, 46, 47]
 YEAR_LABELS = {
@@ -377,7 +379,7 @@ kpi_cards = [
     ('إجمالي الطلاب', totals['students']),
     ('عدد البرامج', totals['programs']),
     ('الطلاب الجدد', totals['new']),
-    ('الخريجون', totals['grads']),
+    ('الخريجين', totals['grads']),
 ]
 kpi_cards2 = [
     ('نسبة التخرج في الوقت', pct(totals['grads_ontime'], totals['new_4_ago'])),
@@ -521,7 +523,7 @@ ws4.cell(deg_start, 1, f'توزيع حسب الدرجة العلمية - {YEAR_L
 ws4.cell(deg_start, 1).alignment = CENTER
 ws4.row_dimensions[deg_start].height = 30
 
-deg_headers = ['الدرجة', 'عدد البرامج', 'الطلاب', 'الخريجون', 'نسبة التخرج', 'نسبة الاستبقاء']
+deg_headers = ['الدرجة', 'عدد البرامج', 'الطلاب', 'الخريجين', 'نسبة التخرج', 'نسبة الاستبقاء']
 for i, h in enumerate(deg_headers, 1):
     ws4.cell(deg_start + 1, i, h)
 style_header_row(ws4, deg_start + 1, len(deg_headers))
@@ -740,8 +742,279 @@ for i, (label, desc) in enumerate(formulas):
 
 print(f'Sheet 6: {row_n - 3} calculation rows')
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  SHEET 7: سجل الخريجين (Graduate Records)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ws7 = wb.create_sheet('سجل الخريجين')
+ws7.sheet_view.rightToLeft = True
+
+ws7.merge_cells('A1:L1')
+ws7.cell(1, 1, 'سجل الخريجين التفصيلي - لمتابعة التواصل والتغذية الراجعة').font = TITLE_FONT
+ws7.cell(1, 1).alignment = CENTER
+ws7.row_dimensions[1].height = 35
+
+grad_headers = [
+    'السنة', 'الرقم الجامعي', 'الاسم', 'التخصص', 'الدرجة', 'القسم',
+    'الجنس', 'الجنسية', 'تاريخ القبول', 'تاريخ التخرج',
+    'تاريخ التخرج المتوقع', 'المعدل'
+]
+for i, h in enumerate(grad_headers, 1):
+    ws7.cell(2, i, h)
+style_header_row(ws7, 2, len(grad_headers))
+
+# Read graduates CSV
+grad_rows = []
+if os.path.exists(GRADS_CSV):
+    with open(GRADS_CSV, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f, delimiter=';')
+        for r in reader:
+            grad_rows.append(r)
+
+row_n = 3
+for idx, g in enumerate(grad_rows):
+    is_alt = idx % 2 == 1
+    year_val = int(g['السنة']) if g['السنة'] else 0
+    year_label = YEAR_LABELS.get(year_val, str(1400 + year_val) if year_val else '')
+
+    vals = [
+        year_label,
+        g['الرقم_الجامعي'],
+        g['الاسم'],
+        g['التخصص'],
+        g['الدرجة'],
+        g['القسم'],
+        g['الجنس'],
+        g['الجنسية'],
+        g['تاريخ_القبول'],
+        g['تاريخ_التخرج'],
+        g['تاريخ_التخرج_المتوقع'],
+        g['المعدل'],
+    ]
+    for c, v in enumerate(vals, 1):
+        ws7.cell(row_n, c, v)
+        style_data_cell(ws7, row_n, c, is_alt)
+    row_n += 1
+
+auto_width(ws7, min_w=14, max_w=35)
+ws7.auto_filter.ref = f'A2:L{row_n - 1}'
+
+# Freeze top rows for easy scrolling
+ws7.freeze_panes = 'A3'
+
+# ── Summary section below data ──
+summary_start = row_n + 2
+ws7.merge_cells(f'A{summary_start}:F{summary_start}')
+ws7.cell(summary_start, 1, 'ملخص الخريجين حسب السنة والدرجة').font = SUBTITLE_FONT
+ws7.cell(summary_start, 1).alignment = CENTER
+
+# Aggregate graduates by year and degree
+grad_summary = {}
+for g in grad_rows:
+    year_val = int(g['السنة']) if g['السنة'] else 0
+    degree = g['الدرجة']
+    key = (year_val, degree)
+    grad_summary[key] = grad_summary.get(key, 0) + 1
+
+sum_headers = ['السنة', 'الدرجة', 'عدد الخريجين']
+for i, h in enumerate(sum_headers, 1):
+    ws7.cell(summary_start + 1, i, h)
+style_header_row(ws7, summary_start + 1, len(sum_headers))
+
+sr = summary_start + 2
+for (y, deg) in sorted(grad_summary.keys()):
+    is_alt = (sr - summary_start - 2) % 2 == 1
+    ws7.cell(sr, 1, YEAR_LABELS.get(y, str(1400 + y)))
+    style_data_cell(ws7, sr, 1, is_alt)
+    ws7.cell(sr, 2, deg)
+    style_data_cell(ws7, sr, 2, is_alt)
+    ws7.cell(sr, 3, grad_summary[(y, deg)])
+    style_data_cell(ws7, sr, 3, is_alt, is_num=True)
+    sr += 1
+
+print(f'Sheet 7: {len(grad_rows)} graduate records')
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  SHEET 8: غير المكملين (Non-Completers)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ws8 = wb.create_sheet('غير المكملين')
+ws8.sheet_view.rightToLeft = True
+
+ws8.merge_cells('A1:L1')
+ws8.cell(1, 1, 'سجل الطلاب غير المكملين - لدراسة أحوالهم ومتابعة حالاتهم').font = TITLE_FONT
+ws8.cell(1, 1).alignment = CENTER
+ws8.row_dimensions[1].height = 35
+
+# Status color coding
+STATUS_COLORS = {
+    'منسحب': PatternFill('solid', fgColor='FFF3CD'),       # أصفر فاتح
+    'مؤجل': PatternFill('solid', fgColor='D1ECF1'),        # أزرق فاتح
+    'مؤجل قبول': PatternFill('solid', fgColor='D1ECF1'),   # أزرق فاتح
+    'معتذر': PatternFill('solid', fgColor='E2E3E5'),       # رمادي فاتح
+    'منقطع عن الدراسة': PatternFill('solid', fgColor='F8D7DA'),  # أحمر فاتح
+    'مفصول اكاديميا': PatternFill('solid', fgColor='F5C6CB'),    # أحمر
+    'مطوي قيده': PatternFill('solid', fgColor='F8D7DA'),         # أحمر فاتح
+    'موقوف تأديبي / مف': PatternFill('solid', fgColor='F5C6CB'),  # أحمر
+    'متوفى': PatternFill('solid', fgColor='D6D8DB'),             # رمادي
+}
+
+nc_headers = [
+    'آخر سنة ظهور', 'الرقم الجامعي', 'الاسم', 'التخصص', 'الدرجة', 'القسم',
+    'الحالة', 'الجنس', 'الجنسية', 'تاريخ القبول', 'المعدل', 'نوع الدراسة'
+]
+for i, h in enumerate(nc_headers, 1):
+    ws8.cell(2, i, h)
+style_header_row(ws8, 2, len(nc_headers))
+
+# Read non-completers CSV
+nc_rows = []
+if os.path.exists(NONCOMP_CSV):
+    with open(NONCOMP_CSV, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f, delimiter=';')
+        for r in reader:
+            nc_rows.append(r)
+
+row_n = 3
+for idx, nc in enumerate(nc_rows):
+    is_alt = idx % 2 == 1
+    year_val = int(nc['آخر_سنة']) if nc['آخر_سنة'] else 0
+    year_label = YEAR_LABELS.get(year_val, str(1400 + year_val) if year_val else '')
+
+    vals = [
+        year_label,
+        nc['الرقم_الجامعي'],
+        nc['الاسم'],
+        nc['التخصص'],
+        nc['الدرجة'],
+        nc['القسم'],
+        nc['الحالة'],
+        nc['الجنس'],
+        nc['الجنسية'],
+        nc['تاريخ_القبول'],
+        nc['المعدل'],
+        nc['نوع_الدراسة'],
+    ]
+    for c, v in enumerate(vals, 1):
+        ws8.cell(row_n, c, v)
+        style_data_cell(ws8, row_n, c, is_alt)
+
+    # تلوين خلية الحالة حسب نوعها
+    status_val = nc['الحالة']
+    if status_val in STATUS_COLORS:
+        ws8.cell(row_n, 7).fill = STATUS_COLORS[status_val]
+
+    row_n += 1
+
+auto_width(ws8, min_w=14, max_w=35)
+ws8.auto_filter.ref = f'A2:L{row_n - 1}'
+
+# Freeze top rows
+ws8.freeze_panes = 'A3'
+
+# ── Summary: count by status ──
+nc_summary_start = row_n + 2
+ws8.merge_cells(f'A{nc_summary_start}:D{nc_summary_start}')
+ws8.cell(nc_summary_start, 1, 'توزيع غير المكملين حسب الحالة').font = SUBTITLE_FONT
+ws8.cell(nc_summary_start, 1).alignment = CENTER
+
+status_count = {}
+for nc in nc_rows:
+    st = nc['الحالة']
+    status_count[st] = status_count.get(st, 0) + 1
+
+sc_headers = ['الحالة', 'العدد', 'النسبة']
+for i, h in enumerate(sc_headers, 1):
+    ws8.cell(nc_summary_start + 1, i, h)
+style_header_row(ws8, nc_summary_start + 1, len(sc_headers))
+
+total_nc = len(nc_rows)
+sr = nc_summary_start + 2
+for st in sorted(status_count.keys(), key=lambda x: -status_count[x]):
+    is_alt = (sr - nc_summary_start - 2) % 2 == 1
+    ws8.cell(sr, 1, st)
+    style_data_cell(ws8, sr, 1, is_alt)
+    if st in STATUS_COLORS:
+        ws8.cell(sr, 1).fill = STATUS_COLORS[st]
+    ws8.cell(sr, 2, status_count[st])
+    style_data_cell(ws8, sr, 2, is_alt, is_num=True)
+    ws8.cell(sr, 3, pct(status_count[st], total_nc))
+    style_data_cell(ws8, sr, 3, is_alt, is_pct=True)
+    sr += 1
+
+# Total row
+ws8.cell(sr, 1, 'الإجمالي')
+ws8.cell(sr, 1).font = Font(name='Tajawal', bold=True, size=11)
+ws8.cell(sr, 1).alignment = CENTER
+ws8.cell(sr, 1).border = THICK_BORDER
+ws8.cell(sr, 2, total_nc)
+ws8.cell(sr, 2).font = Font(name='Tajawal', bold=True, size=11)
+ws8.cell(sr, 2).alignment = CENTER
+ws8.cell(sr, 2).border = THICK_BORDER
+ws8.cell(sr, 2).number_format = '#,##0'
+
+# ── Summary: count by status and year ──
+nc_year_start = sr + 3
+ws8.merge_cells(f'A{nc_year_start}:F{nc_year_start}')
+ws8.cell(nc_year_start, 1, 'توزيع غير المكملين حسب السنة والحالة').font = SUBTITLE_FONT
+ws8.cell(nc_year_start, 1).alignment = CENTER
+
+year_status_count = {}
+for nc in nc_rows:
+    year_val = int(nc['آخر_سنة']) if nc['آخر_سنة'] else 0
+    st = nc['الحالة']
+    key = (year_val, st)
+    year_status_count[key] = year_status_count.get(key, 0) + 1
+
+ys_headers = ['السنة', 'الحالة', 'العدد']
+for i, h in enumerate(ys_headers, 1):
+    ws8.cell(nc_year_start + 1, i, h)
+style_header_row(ws8, nc_year_start + 1, len(ys_headers))
+
+sr = nc_year_start + 2
+for (y, st) in sorted(year_status_count.keys()):
+    is_alt = (sr - nc_year_start - 2) % 2 == 1
+    ws8.cell(sr, 1, YEAR_LABELS.get(y, str(1400 + y)))
+    style_data_cell(ws8, sr, 1, is_alt)
+    ws8.cell(sr, 2, st)
+    style_data_cell(ws8, sr, 2, is_alt)
+    if st in STATUS_COLORS:
+        ws8.cell(sr, 2).fill = STATUS_COLORS[st]
+    ws8.cell(sr, 3, year_status_count[(y, st)])
+    style_data_cell(ws8, sr, 3, is_alt, is_num=True)
+    sr += 1
+
+# ── Summary: count by program ──
+nc_prog_start = sr + 3
+ws8.merge_cells(f'A{nc_prog_start}:F{nc_prog_start}')
+ws8.cell(nc_prog_start, 1, 'توزيع غير المكملين حسب البرنامج').font = SUBTITLE_FONT
+ws8.cell(nc_prog_start, 1).alignment = CENTER
+
+prog_count = {}
+for nc in nc_rows:
+    key = (nc['التخصص'], nc['الدرجة'])
+    prog_count[key] = prog_count.get(key, 0) + 1
+
+pp_headers = ['التخصص', 'الدرجة', 'العدد', 'النسبة']
+for i, h in enumerate(pp_headers, 1):
+    ws8.cell(nc_prog_start + 1, i, h)
+style_header_row(ws8, nc_prog_start + 1, len(pp_headers))
+
+sr = nc_prog_start + 2
+for (prog, deg) in sorted(prog_count.keys(), key=lambda x: -prog_count[x]):
+    is_alt = (sr - nc_prog_start - 2) % 2 == 1
+    ws8.cell(sr, 1, prog)
+    style_data_cell(ws8, sr, 1, is_alt)
+    ws8.cell(sr, 2, deg)
+    style_data_cell(ws8, sr, 2, is_alt)
+    ws8.cell(sr, 3, prog_count[(prog, deg)])
+    style_data_cell(ws8, sr, 3, is_alt, is_num=True)
+    ws8.cell(sr, 4, pct(prog_count[(prog, deg)], total_nc))
+    style_data_cell(ws8, sr, 4, is_alt, is_pct=True)
+    sr += 1
+
+print(f'Sheet 8: {len(nc_rows)} non-completer records')
+
 # ── Move Dashboard sheet to first position ──
-wb.move_sheet('لوحة المعلومات', offset=-3)
+wb.move_sheet('لوحة المعلومات', offset=-5)
 
 # ── Save ──
 wb.save(OUT_PATH)

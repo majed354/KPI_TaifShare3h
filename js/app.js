@@ -373,7 +373,7 @@ function renderFlowChart(items) {
             labels,
             datasets: [
                 { label: 'المستجدون', data: sorted.map(x => x.data.students_new), backgroundColor: '#3b82f6', borderRadius: 4 },
-                { label: 'الخريجون', data: sorted.map(x => x.data.graduates_total), backgroundColor: '#10b981', borderRadius: 4 },
+                { label: 'الخريجين', data: sorted.map(x => x.data.graduates_total), backgroundColor: '#10b981', borderRadius: 4 },
             ]
         },
         options: {
@@ -506,7 +506,7 @@ function showProgramDetail() {
     if (d.students_international > 0) stats.push({icon:'🌍', label:'الدوليون', value: fmtNum(d.students_international), color:'#f97316'});
     if (d.students_new > 0) stats.push({icon:'🆕', label:'المستجدون', value: fmtNum(d.students_new), color:'#06b6d4'});
     if (d.students_retained > 0 || d.prev_new_count > 0) stats.push({icon:'🔄', label:'استبقاء الدفعة السابقة', value: d.prev_new_count > 0 ? fmtNum(d.students_retained) + ' من ' + fmtNum(d.prev_new_count) : fmtNum(d.students_retained), color:'#8b5cf6'});
-    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجون', value: fmtNum(d.graduates_total), color:'#10b981'});
+    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجين', value: fmtNum(d.graduates_total), color:'#10b981'});
     if (d.graduates_ontime > 0 || d.new_4_ago_count > 0) stats.push({icon:'⏱️', label:'خريجو الدفعة بالوقت', value: d.new_4_ago_count > 0 ? fmtNum(d.graduates_ontime) + ' من ' + fmtNum(d.new_4_ago_count) : fmtNum(d.graduates_ontime), color:'#0d8e8e'});
     if (d.sections_total > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(d.sections_total), color:'#6b7280'});
     if (d.faculty_total > 0) stats.push({icon:'👨‍🏫', label:'هيئة التدريس', value: fmtNum(d.faculty_total), color:'#7c3aed'});
@@ -569,7 +569,7 @@ function renderTrendChart(prog) {
             labels,
             datasets: [
                 { label: 'الطلاب المنتظمون', data: students, borderColor: '#0d8e8e', backgroundColor: 'rgba(13,142,142,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
-                { label: 'الخريجون', data: grads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
+                { label: 'الخريجين', data: grads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
                 { label: 'المستجدون', data: newS, borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
             ]
         },
