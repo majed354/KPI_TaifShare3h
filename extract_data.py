@@ -35,13 +35,13 @@ def get_previous_year(year):
     return None
 
 def get_year_n_before(year, n):
-    """الحصول على السنة قبل n سنوات في التسلسل"""
-    try:
-        idx = YEAR_SEQUENCE.index(year)
-        if idx >= n:
-            return YEAR_SEQUENCE[idx - n]
-    except ValueError:
-        pass
+    """الحصول على السنة قبل n سنوات حقيقية (بالحساب الفعلي وليس بالفهرس)
+    مثال: سنة 1446 قبل 4 سنوات = 1442 (وليس 1441)
+    لأن 1443 غير موجودة (مدمجة) لكن الفارق الزمني الحقيقي هو 4 سنوات
+    """
+    target = year - n
+    if target in YEAR_SEQUENCE:
+        return target
     return None
 
 # تطبيع الدرجة العلمية
@@ -72,6 +72,12 @@ DEPT_MAP = {
 # الحالة الوحيدة لاحتساب الطالب ضمن الإجمالي
 ENROLLED_STATUS = 'منتظم'
 GRADUATED_STATUS = 'متخرج'
+
+# البرامج المستبعدة (قديمة/ملغاة)
+EXCLUDED_PROGRAMS = {
+    'الشريعة والدراسات الاسلامية',
+    'الشريعة والدراسات الإسلامية',
+}
 
 # مدة التخرج بالوقت حسب الدرجة العلمية
 DEGREE_YEARS = {
@@ -452,6 +458,9 @@ def main():
         all_keys = set(sem1_groups.keys()) | set(grad_groups.keys())
 
         for (prog, degree) in all_keys:
+            # استبعاد البرامج القديمة/الملغاة
+            if prog in EXCLUDED_PROGRAMS:
+                continue
             dept = DEPT_MAP.get(prog, prog)
             key = f"{dept}|{prog}|{degree}|{year}"
 
