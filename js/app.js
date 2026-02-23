@@ -35,6 +35,8 @@ let allRows = [];      // raw rows from CSV
 let programs = [];     // organized {name, degree, dept, years:{y: data}}
 let charts = {};       // Chart instances
 let currentProg = null;// for export
+let gradData = [];     // graduate records
+let ncData = [];       // non-completer records
 
 // ========================================
 // المساعدات
@@ -863,6 +865,278 @@ function exportCompareExcel() {
 }
 
 // ========================================
+// سجل الخريجين
+// ========================================
+const STATUS_MAP = {
+    'منسحب': { cls: 'st-withdrawn', label: 'منسحب' },
+    'مؤجل': { cls: 'st-postponed', label: 'مؤجل' },
+    'مؤجل قبول': { cls: 'st-postponed', label: 'مؤجل قبول' },
+    'معتذر': { cls: 'st-excused', label: 'معتذر' },
+    'منقطع عن الدراسة': { cls: 'st-absent', label: 'منقطع' },
+    'مفصول اكاديميا': { cls: 'st-dismissed', label: 'مفصول' },
+    'مطوي قيده': { cls: 'st-folded', label: 'مطوي قيده' },
+    'موقوف تأديبي / مف': { cls: 'st-suspended', label: 'موقوف' },
+    'متوفى': { cls: 'st-deceased', label: 'متوفى' },
+};
+
+function parseDetailCSV(text) {
+    const lines = text.trim().split('\n').map(l => l.replace(/\r/g,''));
+    if (lines.length < 2) return [];
+    const sep = lines[0].includes(';') ? ';' : ',';
+    const headers = lines[0].split(sep).map(h => h.trim().replace(/^\uFEFF/,''));
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        const vals = lines[i].split(sep);
+        if (vals.length < 3) continue;
+        const row = {};
+        headers.forEach((h, j) => { row[h] = (vals[j] || '').trim(); });
+        rows.push(row);
+    }
+    return rows;
+}
+
+async function loadGraduates() {
+    try {
+        const res = await fetch('data/graduates_detail.csv?t=' + Date.now());
+        const csv = await res.text();
+        gradData = parseDetailCSV(csv);
+        return true;
+    } catch (e) {
+        console.error('خطأ في تحميل بيانات الخريجين:', e);
+        return false;
+    }
+}
+
+async function loadNonCompleters() {
+    try {
+        const res = await fetch('data/non_completers.csv?t=' + Date.now());
+        const csv = await res.text();
+        ncData = parseDetailCSV(csv);
+        return true;
+    } catch (e) {
+        console.error('خطأ في تحميل بيانات غير المكملين:', e);
+        return false;
+    }
+}
+
+function initGraduatesView() {
+    if (!gradData.length) return;
+
+    // Populate filters
+    const years = [...new Set(gradData.map(g => g['السنة']))].sort();
+    const progs = [...new Set(gradData.map(g => g['التخصص']))].sort((a,b) => a.localeCompare(b,'ar'));
+    const degs = [...new Set(gradData.map(g => g['الدرجة']))];
+
+    const ySel = document.getElementById('grad-year');
+    ySel.innerHTML = '<option value="">الكل</option>' +
+        years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+
+    const pSel = document.getElementById('grad-prog');
+    pSel.innerHTML = '<option value="">الكل</option>' +
+        progs.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    const dSel = document.getElementById('grad-deg');
+    dSel.innerHTML = '<option value="">الكل</option>' +
+        degs.map(d => `<option value="${d}">${d}</option>`).join('');
+
+    // Event listeners
+    [ySel, pSel, dSel].forEach(el => el.addEventListener('change', renderGraduates));
+    document.getElementById('grad-search').addEventListener('input', renderGraduates);
+
+    renderGraduates();
+}
+
+function renderGraduates() {
+    const yearFilter = document.getElementById('grad-year').value;
+    const progFilter = document.getElementById('grad-prog').value;
+    const degFilter = document.getElementById('grad-deg').value;
+    const search = document.getElementById('grad-search').value.trim().toLowerCase();
+
+    let filtered = gradData;
+    if (yearFilter) filtered = filtered.filter(g => g['السنة'] === yearFilter);
+    if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
+    if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (search) filtered = filtered.filter(g =>
+        g['الاسم'].toLowerCase().includes(search) ||
+        g['الرقم_الجامعي'].includes(search)
+    );
+
+    document.getElementById('grad-count').textContent =
+        `${filtered.length.toLocaleString('ar-SA')} سجل من أصل ${gradData.length.toLocaleString('ar-SA')}`;
+
+    const tbody = document.getElementById('grad-tbody');
+    const MAX_SHOW = 500;
+    const showing = filtered.slice(0, MAX_SHOW);
+
+    tbody.innerHTML = showing.map((g, i) => `<tr class="${i%2?'alt':''}">
+        <td>${i+1}</td>
+        <td>${fmtYear(g['السنة'])}</td>
+        <td>${g['الرقم_الجامعي']}</td>
+        <td>${g['الاسم']}</td>
+        <td>${g['التخصص']}</td>
+        <td>${g['الدرجة']}</td>
+        <td>${g['الجنس']}</td>
+        <td>${g['الجنسية']}</td>
+        <td>${g['تاريخ_القبول']}</td>
+        <td>${g['تاريخ_التخرج']}</td>
+        <td>${g['المعدل']}</td>
+    </tr>`).join('');
+
+    if (filtered.length > MAX_SHOW) {
+        tbody.innerHTML += `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:16px">
+            يتم عرض أول ${MAX_SHOW} سجل. استخدم الفلاتر لتصفية النتائج أو صدّر Excel لرؤية الكل.
+        </td></tr>`;
+    }
+}
+
+function exportGradsExcel() {
+    const yearFilter = document.getElementById('grad-year').value;
+    const progFilter = document.getElementById('grad-prog').value;
+    const degFilter = document.getElementById('grad-deg').value;
+    const search = document.getElementById('grad-search').value.trim().toLowerCase();
+
+    let filtered = gradData;
+    if (yearFilter) filtered = filtered.filter(g => g['السنة'] === yearFilter);
+    if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
+    if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (search) filtered = filtered.filter(g =>
+        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+    );
+
+    const rows = [
+        ['السنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الجنس','الجنسية','تاريخ القبول','تاريخ التخرج','المعدل'],
+        ...filtered.map(g => [
+            fmtYear(g['السنة']), g['الرقم_الجامعي'], g['الاسم'], g['التخصص'], g['الدرجة'],
+            g['القسم'], g['الجنس'], g['الجنسية'], g['تاريخ_القبول'], g['تاريخ_التخرج'], g['المعدل']
+        ])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'الخريجين');
+    XLSX.writeFile(wb, `سجل-الخريجين${yearFilter ? '-'+fmtYear(yearFilter) : ''}.xlsx`);
+}
+
+// ========================================
+// غير المكملين
+// ========================================
+function initNonCompleteView() {
+    if (!ncData.length) return;
+
+    const years = [...new Set(ncData.map(g => g['آخر_سنة']))].sort();
+    const progs = [...new Set(ncData.map(g => g['التخصص']))].sort((a,b) => a.localeCompare(b,'ar'));
+    const degs = [...new Set(ncData.map(g => g['الدرجة']))];
+    const statuses = [...new Set(ncData.map(g => g['الحالة']))].sort((a,b) => a.localeCompare(b,'ar'));
+
+    document.getElementById('nc-year').innerHTML = '<option value="">الكل</option>' +
+        years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+    document.getElementById('nc-prog').innerHTML = '<option value="">الكل</option>' +
+        progs.map(p => `<option value="${p}">${p}</option>`).join('');
+    document.getElementById('nc-deg').innerHTML = '<option value="">الكل</option>' +
+        degs.map(d => `<option value="${d}">${d}</option>`).join('');
+    document.getElementById('nc-status').innerHTML = '<option value="">الكل</option>' +
+        statuses.map(s => `<option value="${s}">${s}</option>`).join('');
+
+    ['nc-year','nc-prog','nc-deg','nc-status'].forEach(id =>
+        document.getElementById(id).addEventListener('change', renderNonCompleters));
+    document.getElementById('nc-search').addEventListener('input', renderNonCompleters);
+
+    renderNonCompleters();
+}
+
+function renderNonCompleters() {
+    const yearFilter = document.getElementById('nc-year').value;
+    const progFilter = document.getElementById('nc-prog').value;
+    const degFilter = document.getElementById('nc-deg').value;
+    const statusFilter = document.getElementById('nc-status').value;
+    const search = document.getElementById('nc-search').value.trim().toLowerCase();
+
+    let filtered = ncData;
+    if (yearFilter) filtered = filtered.filter(g => g['آخر_سنة'] === yearFilter);
+    if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
+    if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (statusFilter) filtered = filtered.filter(g => g['الحالة'] === statusFilter);
+    if (search) filtered = filtered.filter(g =>
+        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+    );
+
+    document.getElementById('nc-count').textContent =
+        `${filtered.length.toLocaleString('ar-SA')} سجل من أصل ${ncData.length.toLocaleString('ar-SA')}`;
+
+    // Status summary cards
+    const statusCounts = {};
+    filtered.forEach(nc => {
+        statusCounts[nc['الحالة']] = (statusCounts[nc['الحالة']] || 0) + 1;
+    });
+    const cardsDiv = document.getElementById('nc-summary-cards');
+    cardsDiv.innerHTML = Object.entries(statusCounts)
+        .sort((a,b) => b[1] - a[1])
+        .map(([st, cnt]) => {
+            const info = STATUS_MAP[st] || { cls: '', label: st };
+            return `<div class="status-card">
+                <span class="sc-count">${cnt.toLocaleString('ar-SA')}</span>
+                <span class="sc-label"><span class="status-badge ${info.cls}">${info.label}</span></span>
+            </div>`;
+        }).join('');
+
+    // Table
+    const tbody = document.getElementById('nc-tbody');
+    const MAX_SHOW = 500;
+    const showing = filtered.slice(0, MAX_SHOW);
+
+    tbody.innerHTML = showing.map((nc, i) => {
+        const info = STATUS_MAP[nc['الحالة']] || { cls: '', label: nc['الحالة'] };
+        return `<tr class="${i%2?'alt':''}">
+            <td>${i+1}</td>
+            <td>${fmtYear(nc['آخر_سنة'])}</td>
+            <td>${nc['الرقم_الجامعي']}</td>
+            <td>${nc['الاسم']}</td>
+            <td>${nc['التخصص']}</td>
+            <td>${nc['الدرجة']}</td>
+            <td><span class="status-badge ${info.cls}">${nc['الحالة']}</span></td>
+            <td>${nc['الجنس']}</td>
+            <td>${nc['الجنسية']}</td>
+            <td>${nc['تاريخ_القبول']}</td>
+            <td>${nc['المعدل']}</td>
+        </tr>`;
+    }).join('');
+
+    if (filtered.length > MAX_SHOW) {
+        tbody.innerHTML += `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:16px">
+            يتم عرض أول ${MAX_SHOW} سجل. استخدم الفلاتر لتصفية النتائج أو صدّر Excel لرؤية الكل.
+        </td></tr>`;
+    }
+}
+
+function exportNCExcel() {
+    const yearFilter = document.getElementById('nc-year').value;
+    const progFilter = document.getElementById('nc-prog').value;
+    const degFilter = document.getElementById('nc-deg').value;
+    const statusFilter = document.getElementById('nc-status').value;
+    const search = document.getElementById('nc-search').value.trim().toLowerCase();
+
+    let filtered = ncData;
+    if (yearFilter) filtered = filtered.filter(g => g['آخر_سنة'] === yearFilter);
+    if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
+    if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (statusFilter) filtered = filtered.filter(g => g['الحالة'] === statusFilter);
+    if (search) filtered = filtered.filter(g =>
+        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+    );
+
+    const rows = [
+        ['آخر سنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الحالة','الجنس','الجنسية','تاريخ القبول','المعدل','نوع الدراسة'],
+        ...filtered.map(nc => [
+            fmtYear(nc['آخر_سنة']), nc['الرقم_الجامعي'], nc['الاسم'], nc['التخصص'], nc['الدرجة'],
+            nc['القسم'], nc['الحالة'], nc['الجنس'], nc['الجنسية'], nc['تاريخ_القبول'], nc['المعدل'], nc['نوع_الدراسة']
+        ])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'غير المكملين');
+    XLSX.writeFile(wb, `غير-المكملين${statusFilter ? '-'+statusFilter : ''}.xlsx`);
+}
+
+// ========================================
 // التنقل بين العروض
 // ========================================
 function switchView(viewName) {
@@ -890,4 +1164,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDashboard();
     initProgramView();
     initCompare();
+
+    // Load detail records
+    await Promise.all([loadGraduates(), loadNonCompleters()]);
+    initGraduatesView();
+    initNonCompleteView();
 });

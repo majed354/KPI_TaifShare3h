@@ -526,6 +526,115 @@ body {
 }
 
 /* ============================
+   سجل الخريجين وغير المكملين
+   ============================ */
+.view-desc {
+    font-size: 0.88rem;
+    color: var(--text-light);
+    margin-top: 4px;
+}
+.filter-bar {
+    margin-bottom: 16px;
+}
+.filter-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+.filter-row .form-group {
+    min-width: 140px;
+    flex: 1;
+}
+.filter-row .search-group {
+    min-width: 200px;
+    flex: 2;
+}
+.filter-row input[type="text"] {
+    width: 100%;
+    padding: 8px 12px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font);
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+.filter-row input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+.filter-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.filter-stats span {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 0.95rem;
+}
+.records-table {
+    font-size: 0.82rem;
+}
+.records-table th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    white-space: nowrap;
+}
+.records-table td {
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.records-table td:nth-child(4) {
+    max-width: 250px;
+    white-space: normal;
+}
+.status-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.status-card {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    text-align: center;
+    border: 1px solid var(--border);
+    background: var(--card);
+}
+.status-card .sc-count {
+    font-size: 1.5rem;
+    font-weight: 700;
+    display: block;
+}
+.status-card .sc-label {
+    font-size: 0.78rem;
+    color: var(--text-light);
+    margin-top: 2px;
+}
+.status-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.st-withdrawn { background: #fff3cd; color: #856404; }
+.st-postponed { background: #d1ecf1; color: #0c5460; }
+.st-excused { background: #e2e3e5; color: #383d41; }
+.st-absent { background: #f8d7da; color: #721c24; }
+.st-dismissed { background: #f5c6cb; color: #721c24; }
+.st-folded { background: #f8d7da; color: #721c24; }
+.st-suspended { background: #f5c6cb; color: #721c24; }
+.st-deceased { background: #d6d8db; color: #383d41; }
+
+/* ============================
    مساعدات
    ============================ */
 .hidden { display: none !important; }

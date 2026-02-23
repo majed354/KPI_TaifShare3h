@@ -30,6 +30,8 @@
             <button class="nav-btn active" data-view="dashboard">لوحة المعلومات</button>
             <button class="nav-btn" data-view="program">تفاصيل البرنامج</button>
             <button class="nav-btn" data-view="compare">المقارنة</button>
+            <button class="nav-btn" data-view="graduates">سجل الخريجين</button>
+            <button class="nav-btn" data-view="noncomplete">غير المكملين</button>
         </nav>
     </div>
 </header>
@@ -203,6 +205,124 @@
             <div class="chart-card">
                 <h3>المقارنة البصرية</h3>
                 <div class="chart-wrap"><canvas id="chart-compare"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ سجل الخريجين ============ -->
+    <section id="graduates-view" class="view">
+        <div class="view-top">
+            <h2>🎓 سجل الخريجين</h2>
+            <p class="view-desc">بيانات الخريجين التفصيلية لمتابعة التواصل والتغذية الراجعة</p>
+        </div>
+
+        <div class="card filter-bar">
+            <div class="filter-row">
+                <div class="form-group">
+                    <label>السنة</label>
+                    <select id="grad-year"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>التخصص</label>
+                    <select id="grad-prog"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الدرجة</label>
+                    <select id="grad-deg"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group search-group">
+                    <label>بحث بالاسم أو الرقم</label>
+                    <input type="text" id="grad-search" placeholder="ابحث...">
+                </div>
+            </div>
+            <div class="filter-stats">
+                <span id="grad-count">0 سجل</span>
+                <button class="btn-sm" onclick="exportGradsExcel()">تصدير Excel</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="table-wrap">
+                <table class="data-table records-table" id="tbl-grads">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>السنة</th>
+                            <th>الرقم الجامعي</th>
+                            <th>الاسم</th>
+                            <th>التخصص</th>
+                            <th>الدرجة</th>
+                            <th>الجنس</th>
+                            <th>الجنسية</th>
+                            <th>تاريخ القبول</th>
+                            <th>تاريخ التخرج</th>
+                            <th>المعدل</th>
+                        </tr>
+                    </thead>
+                    <tbody id="grad-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ غير المكملين ============ -->
+    <section id="noncomplete-view" class="view">
+        <div class="view-top">
+            <h2>📋 الطلاب غير المكملين</h2>
+            <p class="view-desc">حصر جميع الحالات الأخرى من غير المنتظمين والمتخرجين لدراسة أحوالهم</p>
+        </div>
+
+        <div class="card filter-bar">
+            <div class="filter-row">
+                <div class="form-group">
+                    <label>آخر سنة</label>
+                    <select id="nc-year"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>التخصص</label>
+                    <select id="nc-prog"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الدرجة</label>
+                    <select id="nc-deg"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الحالة</label>
+                    <select id="nc-status"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group search-group">
+                    <label>بحث بالاسم أو الرقم</label>
+                    <input type="text" id="nc-search" placeholder="ابحث...">
+                </div>
+            </div>
+            <div class="filter-stats">
+                <span id="nc-count">0 سجل</span>
+                <button class="btn-sm" onclick="exportNCExcel()">تصدير Excel</button>
+            </div>
+        </div>
+
+        <div id="nc-summary-cards" class="status-summary"></div>
+
+        <div class="card">
+            <div class="table-wrap">
+                <table class="data-table records-table" id="tbl-nc">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>آخر سنة</th>
+                            <th>الرقم الجامعي</th>
+                            <th>الاسم</th>
+                            <th>التخصص</th>
+                            <th>الدرجة</th>
+                            <th>الحالة</th>
+                            <th>الجنس</th>
+                            <th>الجنسية</th>
+                            <th>تاريخ القبول</th>
+                            <th>المعدل</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nc-tbody"></tbody>
+                </table>
             </div>
         </div>
     </section>
