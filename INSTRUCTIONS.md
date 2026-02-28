@@ -46,6 +46,9 @@ Dept_aName,Major_aName,Degree_aName,Semester,Gender_aName,Join_Semester,students
 > - `data/teaching/years/<year>.json`
 > - `data/new_all_plans.csv`
 > - مع fallback من `data/faculty.csv` عند غياب تدريس فعلي لبعض الأعضاء.
+>
+> ومؤشرات البحث (`faculty_published`, `research_count`, `citations`) تُجلب حيًا من مشروع
+> `faculty-activities` (مع fallback محلي من `data/shared/`).
 
 ---
 
