@@ -38,6 +38,21 @@ let currentProg = null;// for export
 let gradData = [];     // graduate records
 let ncData = [];       // non-completer records
 
+const SUPPORTED_KPI_DEGREES = new Set(['بكالوريوس','الماجستير','دكتوراه']);
+const RANK_ALLOWED_DEGREES = {
+    'معيد': new Set(['بكالوريوس']),
+    'محاضر': new Set(['بكالوريوس']),
+    'مدرس': new Set(['بكالوريوس']),
+    'أستاذ مساعد': new Set(['بكالوريوس','الماجستير']),
+    'أستاذ مشارك': new Set(['بكالوريوس','الماجستير','دكتوراه']),
+    'أستاذ': new Set(['بكالوريوس','الماجستير','دكتوراه']),
+    // المتعاون ليس ضمن القاعدة الرسمية في السؤال، نسمح له بكل الدرجات كحل عملي
+    'متعاون': new Set(['بكالوريوس','الماجستير','دكتوراه']),
+};
+const RANK_BASE_FTE = {
+    'متعاون': 0.5,
+};
+
 // ========================================
 // المساعدات
 // ========================================
@@ -53,6 +68,15 @@ function shortYear(y) {
 function fmtNum(n) {
     return n != null ? n.toLocaleString('ar-SA') : '—';
 }
+function fmtNumFlex(n, frac = 2) {
+    if (n == null) return '—';
+    const rounded = Math.round(n);
+    if (Math.abs(n - rounded) < 0.001) return rounded.toLocaleString('ar-SA');
+    return Number(n).toLocaleString('ar-SA', {
+        minimumFractionDigits: frac,
+        maximumFractionDigits: frac
+    });
+}
 function pct(num, den) {
     if (!den || den === 0) return null;
     return Math.round((num / den) * 1000) / 10;
@@ -66,6 +90,367 @@ function destroyChart(id) {
     if (charts[id]) { charts[id].destroy(); delete charts[id]; }
 }
 
+function absYearFromSemester(semester) {
+    const n = parseInt(semester) || 0;
+    return n < 100 ? 1400 + n : n;
+}
+
+function normalizeDepartment(dept) {
+    const d = String(dept || '').trim();
+    if (!d) return '';
+    if (d === 'الثقافة الإسلامية') return 'الدراسات الإسلامية';
+    return d;
+}
+
+function normalizeDegree(degree) {
+    const d = String(degree || '').trim();
+    if (!d) return '';
+    if (d === 'البكالوريوس' || d === 'بكالوريوس' || d === 'بكالوريوس انتساب') return 'بكالوريوس';
+    if (d === 'الماجستير' || d === 'ماجستير') return 'الماجستير';
+    if (d === 'الدكتوراه' || d === 'دكتوراه') return 'دكتوراه';
+    return d;
+}
+
+function normalizeRank(rank) {
+    const r = String(rank || '').trim().replace('استاذ', 'أستاذ');
+    if (!r) return '';
+    if (r.includes('أستاذ مساعد')) return 'أستاذ مساعد';
+    if (r.includes('أستاذ مشارك')) return 'أستاذ مشارك';
+    if (r.includes('أستاذ')) return 'أستاذ';
+    if (r.includes('محاضر')) return 'محاضر';
+    if (r.includes('معيد')) return 'معيد';
+    if (r.includes('مدرس')) return 'مدرس';
+    if (r.includes('متعاون')) return 'متعاون';
+    return r;
+}
+
+function getFacultyBaseForRatio(d) {
+    if ((d.faculty_ratio_base || 0) > 0) return d.faculty_ratio_base;
+    if ((d.faculty_total || 0) > 0) return d.faculty_total;
+    return 0;
+}
+
+function parseFlatCSV(text, forcedSep = null) {
+    if (!text || !text.trim()) return [];
+    const lines = text.trim().split('\n').map(l => l.replace(/\r/g,''));
+    if (lines.length < 2) return [];
+    const sep = forcedSep || (lines[0].includes(';') ? ';' : ',');
+    const headers = lines[0].split(sep).map(h => h.trim().replace(/^\uFEFF/, ''));
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const vals = lines[i].split(sep);
+        const row = {};
+        headers.forEach((h, idx) => { row[h] = (vals[idx] || '').trim(); });
+        rows.push(row);
+    }
+    return rows;
+}
+
+function pickCell(row, keys) {
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(row, key) && row[key] != null && String(row[key]).trim() !== '') {
+            return String(row[key]).trim();
+        }
+    }
+    return '';
+}
+
+async function fetchTextIfExists(url) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return await res.text();
+    } catch {
+        return null;
+    }
+}
+
+async function fetchJSONIfExists(url) {
+    try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+function buildWeights(programKeys, studentsByProgramKey) {
+    const uniqueKeys = [...new Set(programKeys)];
+    if (uniqueKeys.length === 0) return [];
+    if (uniqueKeys.length === 1) return [{ key: uniqueKeys[0], weight: 1 }];
+
+    const demands = uniqueKeys.map(k => Math.max(0, Number(studentsByProgramKey[k]) || 0));
+    const demandTotal = demands.reduce((s, x) => s + x, 0);
+    if (demandTotal > 0) {
+        return uniqueKeys.map((key, idx) => ({ key, weight: demands[idx] / demandTotal }));
+    }
+    const equal = 1 / uniqueKeys.length;
+    return uniqueKeys.map(key => ({ key, weight: equal }));
+}
+
+function resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid) {
+    const direct = facultyProfilesByYearId[`${year}|${fid}`];
+    if (direct) return direct;
+    const list = facultyProfilesById[fid];
+    if (!list || !list.length) return null;
+    let best = null;
+    list.forEach(p => {
+        if (p.year <= year && (!best || p.year > best.year)) best = p;
+    });
+    return best || list[list.length - 1];
+}
+
+function getRankAllowedDegrees(rank) {
+    return RANK_ALLOWED_DEGREES[normalizeRank(rank)] || null;
+}
+
+function getRankBaseFTE(rank) {
+    const normalized = normalizeRank(rank);
+    return RANK_BASE_FTE[normalized] || 1;
+}
+
+function getDeptProgramKeys(programsByDeptYear, year, dept) {
+    return (programsByDeptYear[`${year}|${dept}`] || []).map(p => p.key);
+}
+
+function getDeptDegreeProgramKeys(programsByDeptYear, year, dept, degree) {
+    return (programsByDeptYear[`${year}|${dept}`] || [])
+        .filter(p => p.degree === degree)
+        .map(p => p.key);
+}
+
+async function applyTeachingBasedFacultyFTE(rows) {
+    const years = [...new Set(rows.map(r => absYearFromSemester(r.Semester)))].sort((a,b) => a - b);
+    if (!years.length) return { applied: false, reason: 'no-years' };
+
+    const stamp = Date.now();
+    const [plansText, facultyText] = await Promise.all([
+        fetchTextIfExists(`data/new_all_plans.csv?t=${stamp}`),
+        fetchTextIfExists(`data/faculty.csv?t=${stamp}`)
+    ]);
+
+    if (!plansText || !facultyText) {
+        return { applied: false, reason: 'missing-plans-or-faculty' };
+    }
+
+    const planRows = parseFlatCSV(plansText, ';');
+    const facultyRows = parseFlatCSV(facultyText, ',');
+    if (!planRows.length || !facultyRows.length) {
+        return { applied: false, reason: 'empty-plans-or-faculty' };
+    }
+
+    const yearPayloads = await Promise.all(
+        years.map(y => fetchJSONIfExists(`data/teaching/years/${y}.json?t=${stamp}`))
+    );
+
+    const teachingByYear = {};
+    years.forEach((y, idx) => {
+        const payload = yearPayloads[idx];
+        if (!payload) return;
+        const records = Array.isArray(payload) ? payload : payload.records;
+        if (Array.isArray(records) && records.length) teachingByYear[y] = records;
+    });
+
+    // برنامج/سنة من data.csv
+    const studentsByProgramKey = {};
+    const programMetaByKey = {};
+    const programLookupByYearMajorDegree = {};
+    const programsByDeptYear = {};
+    rows.forEach(r => {
+        const year = absYearFromSemester(r.Semester);
+        const dept = normalizeDepartment(r.Dept_aName);
+        const major = String(r.Major_aName || '').trim();
+        const degree = normalizeDegree(r.Degree_aName);
+        if (!major || !SUPPORTED_KPI_DEGREES.has(degree)) return;
+
+        const pKey = `${year}|${dept}|${major}|${degree}`;
+        studentsByProgramKey[pKey] = Number(r.students_total) || 0;
+        programMetaByKey[pKey] = { year, dept, major, degree };
+
+        const mdKey = `${year}|${major}|${degree}`;
+        if (!programLookupByYearMajorDegree[mdKey]) programLookupByYearMajorDegree[mdKey] = [];
+        if (!programLookupByYearMajorDegree[mdKey].includes(pKey)) {
+            programLookupByYearMajorDegree[mdKey].push(pKey);
+        }
+
+        const dyKey = `${year}|${dept}`;
+        if (!programsByDeptYear[dyKey]) programsByDeptYear[dyKey] = [];
+        if (!programsByDeptYear[dyKey].some(x => x.key === pKey)) {
+            programsByDeptYear[dyKey].push({
+                key: pKey,
+                degree,
+                students: Number(r.students_total) || 0
+            });
+        }
+    });
+
+    // خريطة المقرر -> البرامج
+    const courseToPrograms = {};
+    planRows.forEach(row => {
+        const code = pickCell(row, ['Code', '\uFEFFCode', 'رمز المقرر']);
+        const major = pickCell(row, ['Program', '\uFEFFProgram', 'البرنامج']);
+        const degree = normalizeDegree(pickCell(row, ['Degree', 'الدرجة']));
+        if (!code || !major || !SUPPORTED_KPI_DEGREES.has(degree)) return;
+        if (!courseToPrograms[code]) courseToPrograms[code] = [];
+        if (!courseToPrograms[code].some(x => x.major === major && x.degree === degree)) {
+            courseToPrograms[code].push({ major, degree });
+        }
+    });
+
+    // فهرس أعضاء هيئة التدريس (للـ fallback)
+    const facultyProfilesByYearId = {};
+    const facultyProfilesById = {};
+    const activeFacultyByYear = {};
+    facultyRows.forEach(row => {
+        const id = pickCell(row, ['id', 'ID']);
+        const yearRaw = pickCell(row, ['year', 'Year']);
+        const year = parseInt(yearRaw, 10);
+        if (!id || !year) return;
+        const profile = {
+            id,
+            year,
+            rank: normalizeRank(pickCell(row, ['rank', 'Rank'])),
+            dept: normalizeDepartment(pickCell(row, ['department', 'Department'])),
+            active: pickCell(row, ['active', 'Active']) === 'نعم'
+        };
+
+        facultyProfilesByYearId[`${year}|${id}`] = profile;
+        if (!facultyProfilesById[id]) facultyProfilesById[id] = [];
+        facultyProfilesById[id].push(profile);
+
+        if (profile.active) {
+            if (!activeFacultyByYear[year]) activeFacultyByYear[year] = [];
+            if (!activeFacultyByYear[year].some(x => x.id === id)) {
+                activeFacultyByYear[year].push(profile);
+            }
+        }
+    });
+    Object.values(facultyProfilesById).forEach(list => list.sort((a,b) => a.year - b.year));
+
+    const facultyProgramLoads = {}; // year|fid -> {programKey: weighted_load}
+
+    // 1) تحميل تدريسي فعلي من ملفات teaching/years/*.json
+    Object.entries(teachingByYear).forEach(([yearStr, records]) => {
+        const year = parseInt(yearStr, 10);
+        records.forEach(rec => {
+            const fid = String(rec.fid || '').trim();
+            if (!fid) return;
+            const facKey = `${year}|${fid}`;
+            const profile = resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid);
+            const deptHint = normalizeDepartment(profile?.dept || '');
+            if (!facultyProgramLoads[facKey]) facultyProgramLoads[facKey] = {};
+
+            const courses = Array.isArray(rec.cs) ? rec.cs : [];
+            courses.forEach(c => {
+                const secDegree = normalizeDegree(c.dg);
+                if (!SUPPORTED_KPI_DEGREES.has(secDegree)) return;
+
+                const loadHours = Number(c.h);
+                const load = Number.isFinite(loadHours) && loadHours > 0 ? loadHours : 1;
+                const code = String(c.cc || '').trim();
+
+                let candidateProgramKeys = [];
+
+                // محاولة ربط مباشر من رمز المقرر
+                const mapped = courseToPrograms[code] || [];
+                mapped.forEach(mp => {
+                    if (mp.degree !== secDegree) return;
+                    const mdKey = `${year}|${mp.major}|${mp.degree}`;
+                    const options = programLookupByYearMajorDegree[mdKey] || [];
+                    if (!options.length) return;
+                    if (options.length === 1) {
+                        candidateProgramKeys.push(options[0]);
+                        return;
+                    }
+                    const deptMatched = deptHint ? options.filter(k => k.split('|')[1] === deptHint) : [];
+                    candidateProgramKeys.push(...(deptMatched.length ? deptMatched : options));
+                });
+
+                // fallback: لو الرمز غير موجود في الخطط نوزع داخل القسم/الدرجة
+                candidateProgramKeys = [...new Set(candidateProgramKeys)];
+                if (!candidateProgramKeys.length && deptHint) {
+                    candidateProgramKeys = getDeptDegreeProgramKeys(programsByDeptYear, year, deptHint, secDegree);
+                }
+                if (!candidateProgramKeys.length) return;
+
+                const weights = buildWeights(candidateProgramKeys, studentsByProgramKey);
+                weights.forEach(w => {
+                    facultyProgramLoads[facKey][w.key] = (facultyProgramLoads[facKey][w.key] || 0) + (load * w.weight);
+                });
+            });
+        });
+    });
+
+    // نحول أحمال كل عضو إلى FTE = 1 موزعة على البرامج حسب نسب الأحمال
+    const fteByProgramKey = {};
+    const facultyWithActualTeaching = new Set();
+    Object.entries(facultyProgramLoads).forEach(([facKey, byProgram]) => {
+        const totalLoad = Object.values(byProgram).reduce((s, x) => s + x, 0);
+        if (totalLoad <= 0) return;
+        facultyWithActualTeaching.add(facKey);
+        const [yearStr, fid] = facKey.split('|');
+        const year = parseInt(yearStr, 10);
+        const profile = resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid);
+        const baseFTE = getRankBaseFTE(profile?.rank);
+        Object.entries(byProgram).forEach(([pKey, load]) => {
+            fteByProgramKey[pKey] = (fteByProgramKey[pKey] || 0) + ((load / totalLoad) * baseFTE);
+        });
+    });
+
+    // 2) fallback: الأعضاء النشطون الذين لا يوجد لهم تدريس فعلي
+    years.forEach(year => {
+        const activeFaculty = activeFacultyByYear[year] || [];
+        activeFaculty.forEach(profile => {
+            const facKey = `${year}|${profile.id}`;
+            if (facultyWithActualTeaching.has(facKey)) return;
+            if (!profile.dept) return;
+
+            const allowedDegrees = getRankAllowedDegrees(profile.rank);
+            let candidateKeys = getDeptProgramKeys(programsByDeptYear, year, profile.dept);
+            if (allowedDegrees) {
+                candidateKeys = candidateKeys.filter(k => allowedDegrees.has(programMetaByKey[k]?.degree));
+            }
+            if (!candidateKeys.length) return;
+
+            const baseFTE = getRankBaseFTE(profile.rank);
+            const weights = buildWeights(candidateKeys, studentsByProgramKey);
+            weights.forEach(w => {
+                fteByProgramKey[w.key] = (fteByProgramKey[w.key] || 0) + (w.weight * baseFTE);
+            });
+        });
+    });
+
+    let programsWithComputedFTE = 0;
+    rows.forEach(r => {
+        const year = absYearFromSemester(r.Semester);
+        const dept = normalizeDepartment(r.Dept_aName);
+        const major = String(r.Major_aName || '').trim();
+        const degree = normalizeDegree(r.Degree_aName);
+        const pKey = `${year}|${dept}|${major}|${degree}`;
+        const computed = Number(fteByProgramKey[pKey]) || 0;
+
+        if (computed > 0) {
+            r.faculty_ratio_base = Math.round(computed * 100) / 100;
+            r.faculty_ratio_source = 'teaching_fte';
+            programsWithComputedFTE++;
+        } else if (r.faculty_total > 0) {
+            r.faculty_ratio_base = r.faculty_total;
+            r.faculty_ratio_source = 'csv';
+        } else {
+            r.faculty_ratio_base = 0;
+            r.faculty_ratio_source = 'none';
+        }
+    });
+
+    return {
+        applied: programsWithComputedFTE > 0,
+        programsWithComputedFTE,
+        yearsWithTeaching: Object.keys(teachingByYear).length,
+    };
+}
+
 // ========================================
 // تحميل وتحليل البيانات
 // ========================================
@@ -76,9 +461,14 @@ async function loadData() {
         const res = await fetch('data/data.csv?t=' + Date.now());
         const csv = await res.text();
         allRows = parseCSV(csv);
+        const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
         dot.className = 'dot ok';
-        txt.textContent = `تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`;
+        if (fteInfo.applied) {
+            txt.textContent = `تم تحميل ${programs.length} برنامج - ${allRows.length} سجل | تم احتساب هيئة التدريس من التدريس الفعلي (${fteInfo.programsWithComputedFTE} سجل)`;
+        } else {
+            txt.textContent = `تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`;
+        }
         return true;
     } catch (e) {
         console.error(e);
@@ -166,8 +556,9 @@ function calcKPIs(d, degree) {
     kpi.retention_detail = d.prev_new_count > 0 ? `${d.students_retained} من ${d.prev_new_count}` : null;
 
     // نسبة الطلاب/هيئة التدريس
-    if (d.faculty_total > 0 && d.students_total > 0) {
-        kpi.student_faculty_ratio = `1:${Math.round(d.students_total / d.faculty_total)}`;
+    const facultyBase = getFacultyBaseForRatio(d);
+    if (facultyBase > 0 && d.students_total > 0) {
+        kpi.student_faculty_ratio = `1:${(d.students_total / facultyBase).toFixed(1)}`;
     } else {
         kpi.student_faculty_ratio = null;
     }
@@ -511,7 +902,13 @@ function showProgramDetail() {
     if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجين', value: fmtNum(d.graduates_total), color:'#10b981'});
     if (d.graduates_ontime > 0 || d.new_4_ago_count > 0) stats.push({icon:'⏱️', label:'خريجو الدفعة بالوقت', value: d.new_4_ago_count > 0 ? fmtNum(d.graduates_ontime) + ' من ' + fmtNum(d.new_4_ago_count) : fmtNum(d.graduates_ontime), color:'#0d8e8e'});
     if (d.sections_total > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(d.sections_total), color:'#6b7280'});
-    if (d.faculty_total > 0) stats.push({icon:'👨‍🏫', label:'هيئة التدريس', value: fmtNum(d.faculty_total), color:'#7c3aed'});
+    const facultyBase = getFacultyBaseForRatio(d);
+    if (facultyBase > 0) {
+        const facultyLabel = d.faculty_ratio_source === 'teaching_fte'
+            ? 'هيئة التدريس (مكافئ FTE)'
+            : 'هيئة التدريس';
+        stats.push({icon:'👨‍🏫', label: facultyLabel, value: fmtNumFlex(facultyBase), color:'#7c3aed'});
+    }
     if (d.research_count > 0) stats.push({icon:'📚', label:'الأبحاث', value: fmtNum(d.research_count), color:'#eab308'});
     if (d.citations > 0) stats.push({icon:'📎', label:'الاقتباسات', value: fmtNum(d.citations), color:'#14b8a6'});
 

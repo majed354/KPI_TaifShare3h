@@ -70,7 +70,7 @@
 
 | المؤشر | المعادلة |
 |--------|----------|
-| نسبة الطلاب/هيئة التدريس | `students_total ÷ faculty_total` |
+| نسبة الطلاب/هيئة التدريس | `students_total ÷ faculty_FTE` (تدريس فعلي) أو `faculty_total` كاحتياطي |
 | نسبة النشر العلمي (%) | `(faculty_published ÷ faculty_total) × 100` |
 | البحوث/عضو هيئة تدريس | `research_count ÷ faculty_total` |
 | الاقتباسات/عضو هيئة تدريس | `citations ÷ faculty_total` |

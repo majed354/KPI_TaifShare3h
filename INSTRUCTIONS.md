@@ -37,10 +37,15 @@ Dept_aName,Major_aName,Degree_aName,Semester,Gender_aName,Join_Semester,students
 
 | المؤشر | المعادلة |
 |--------|----------|
-| نسبة الطلاب/هيئة التدريس | `students ÷ faculty_total` |
+| نسبة الطلاب/هيئة التدريس | `students ÷ faculty_FTE` (من التدريس الفعلي إذا توفر، وإلا `faculty_total`) |
 | نسبة النشر العلمي (%) | `(faculty_published ÷ faculty_total) × 100` |
 | البحوث/عضو هيئة تدريس | `research_count ÷ faculty_total` |
 | الاقتباسات/عضو هيئة تدريس | `citations ÷ faculty_total` |
+
+> `faculty_FTE` يُحسب تلقائيًا من:
+> - `data/teaching/years/<year>.json`
+> - `data/new_all_plans.csv`
+> - مع fallback من `data/faculty.csv` عند غياب تدريس فعلي لبعض الأعضاء.
 
 ---
 
