@@ -40,7 +40,7 @@ Dept_aName,Major_aName,Degree_aName,Semester,Gender_aName,Join_Semester,students
 | نسبة الطلاب/هيئة التدريس | `students ÷ faculty_FTE` (من التدريس الفعلي إذا توفر، وإلا `faculty_total`) |
 | نسبة النشر العلمي (%) | `(faculty_published ÷ faculty_total) × 100` |
 | البحوث/عضو هيئة تدريس | `research_count ÷ faculty_total` |
-| الاقتباسات/عضو هيئة تدريس | `citations ÷ faculty_total` |
+| متوسط الاقتباسات لكل بحث | `citations ÷ research_count` |
 
 > `faculty_FTE` يُحسب تلقائيًا من:
 > - `data/teaching/years/<year>.json`
@@ -48,7 +48,7 @@ Dept_aName,Major_aName,Degree_aName,Semester,Gender_aName,Join_Semester,students
 > - مع fallback من `data/faculty.csv` عند غياب تدريس فعلي لبعض الأعضاء.
 >
 > ومؤشرات البحث (`faculty_published`, `research_count`, `citations`) تُجلب حيًا من مشروع
-> `faculty-activities` (مع fallback محلي من `data/shared/`).
+> `faculty-activities` مباشرة من المستودع (مع دمج Google Sheets عند توفره).
 
 ---
 

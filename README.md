@@ -41,17 +41,17 @@
 الموقع يجلب تلقائيًا مؤشرات:
 - نسبة النشر العلمي لأعضاء هيئة التدريس
 - معدل البحوث لكل عضو
-- معدل الاقتباسات لكل عضو
+- متوسط الاقتباسات لكل بحث
 
 من مستودع:
 `https://github.com/majed354/faculty-activities`
 
 ### طريقة العمل
-- المصدر الأساسي (حي): `raw.githubusercontent.com` من ملفات:
+- المصدر الحي (الوحيد): `raw.githubusercontent.com` من ملفات:
   - `data/faculty.csv`
   - `data/publications.csv`
   - `data/config.json`
-- fallback محلي عند تعذر الاتصال: `data/shared/`
+- مع دمج مباشر لبيانات Google Sheets عبر `google_sheets_api?action=read`
 
 ### توزيع القيم على البرامج
 - الحساب يتم على مستوى **القسم + السنة**.

@@ -13,7 +13,7 @@ const CHART_COLORS = [
     '#22c55e','#eab308','#14b8a6','#e11d48','#7c3aed','#0ea5e9'
 ];
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
-const ACTIVITIES_LOCAL_FALLBACK_BASE = 'data/shared';
+const RESEARCH_KPI_EXCLUDED_RANKS = new Set(['معيد', 'محاضر', 'متعاون', 'مدرس']);
 const INDICATORS = [
     { id:1,  name:"تقويم الطالب لجودة خبرات التعلم", unit:"درجة", key:"experience_eval", numeric:true },
     { id:2,  name:"تقييم الطالب لجودة المقررات",     unit:"درجة", key:"course_eval",     numeric:true },
@@ -25,7 +25,7 @@ const INDICATORS = [
     { id:8,  name:"نسبة الطلاب/هيئة التدريس",         unit:"نسبة", key:"student_faculty_ratio" },
     { id:9,  name:"نسبة النشر العلمي",                unit:"%",    key:"publication_pct", numeric:true },
     { id:10, name:"البحوث/عضو هيئة تدريس",           unit:"بحث",  key:"research_per_faculty", numeric:true },
-    { id:11, name:"الاقتباسات/عضو هيئة تدريس",       unit:"اقتباس", key:"citations_per_faculty", numeric:true },
+    { id:11, name:"متوسط الاقتباسات لكل بحث",         unit:"اقتباس", key:"citations_per_faculty", numeric:true },
     { id:12, name:"نسبة نشر طلاب الدراسات العليا",   unit:"%",    key:"student_publication", numeric:true, gradOnly:true },
     { id:13, name:"براءات الاختراع",                  unit:"براءة", key:"patents", numeric:true, gradOnly:true },
 ];
@@ -235,6 +235,35 @@ function splitIdsPipe(text) {
         .filter(Boolean);
 }
 
+function mergeActivityPublications(baseRows, extraRows) {
+    const merged = [...baseRows];
+    const seen = new Set(
+        baseRows.map(p => `${String(p.title || '').trim()}|${String(p.authors_ids || p.participant_ids || '').trim()}`)
+    );
+    (extraRows || []).forEach(row => {
+        const sig = `${String(row.title || '').trim()}|${String(row.authors_ids || row.participant_ids || '').trim()}`;
+        if (!sig || seen.has(sig)) return;
+        seen.add(sig);
+        merged.push(row);
+    });
+    return merged;
+}
+
+async function fetchActivitySheetsData(apiUrl) {
+    if (!apiUrl) return null;
+    try {
+        const response = await fetch(`${apiUrl}?action=read`, {
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!response.ok) return null;
+        const payload = await response.json();
+        if (payload && !payload.error) return payload;
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 async function fetchTextFromSources(paths) {
     for (const p of paths) {
         const text = await fetchTextIfExists(p);
@@ -251,18 +280,6 @@ async function fetchJSONFromSources(paths) {
     return null;
 }
 
-function resolveFacultyDeptForYear(facultyByYearId, facultyById, year, fid) {
-    const direct = facultyByYearId[`${year}|${fid}`];
-    if (direct) return direct;
-    const list = facultyById[fid];
-    if (!list || !list.length) return null;
-    let best = null;
-    list.forEach(item => {
-        if (item.year <= year && (!best || item.year > best.year)) best = item;
-    });
-    return best || list[list.length - 1];
-}
-
 async function applyResearchIndicatorsFromActivities(rows) {
     const years = [...new Set(rows.map(r => absYearFromSemester(r.Semester)))];
     if (!years.length) return { applied: false, reason: 'no-years' };
@@ -270,16 +287,12 @@ async function applyResearchIndicatorsFromActivities(rows) {
     const stamp = Date.now();
     const facultyPaths = [
         `${ACTIVITIES_RAW_BASE}/faculty.csv?t=${stamp}`,
-        `${ACTIVITIES_LOCAL_FALLBACK_BASE}/faculty.csv?t=${stamp}`,
-        `data/faculty.csv?t=${stamp}`,
     ];
     const publicationsPaths = [
         `${ACTIVITIES_RAW_BASE}/publications.csv?t=${stamp}`,
-        `${ACTIVITIES_LOCAL_FALLBACK_BASE}/publications.csv?t=${stamp}`,
     ];
     const configPaths = [
         `${ACTIVITIES_RAW_BASE}/config.json?t=${stamp}`,
-        `${ACTIVITIES_LOCAL_FALLBACK_BASE}/config.json?t=${stamp}`,
     ];
 
     const [facultyText, publicationsText, configObj] = await Promise.all([
@@ -293,17 +306,22 @@ async function applyResearchIndicatorsFromActivities(rows) {
     }
 
     const facultyRows = parseFlatCSV(facultyText, ',');
-    const publicationsRows = parseFlatCSV(publicationsText, ',');
+    let publicationsRows = parseFlatCSV(publicationsText, ',');
     if (!facultyRows.length || !publicationsRows.length) {
         return { applied: false, reason: 'empty-faculty-or-publications' };
     }
 
+    // مطابقة موقع الأنشطة: دمج البيانات الحية من Google Sheets فوق CSV
+    const sheetsPayload = await fetchActivitySheetsData(configObj?.google_sheets_api);
+    if (sheetsPayload?.publications?.length) {
+        publicationsRows = mergeActivityPublications(publicationsRows, sheetsPayload.publications);
+    }
+
     const citationsMap = (configObj && configObj.citations_ranges) ? configObj.citations_ranges : null;
 
-    // active faculty map
-    const facultyByYearDept = {};
-    const facultyByYearId = {};
-    const facultyById = {};
+    // فهارس أعضاء هيئة التدريس لمطابقة منطق موقع الأنشطة
+    const deptIds = {};               // dept -> Set(all ids) عبر كل السنوات
+    const eligibleIdsByYearDept = {}; // year|dept -> Set(ids) (نشط + مؤهل للـ KPI)
     facultyRows.forEach(row => {
         const id = pickCell(row, ['id', 'ID']);
         const year = parseInt(pickCell(row, ['year', 'Year']), 10);
@@ -311,22 +329,34 @@ async function applyResearchIndicatorsFromActivities(rows) {
 
         const active = pickCell(row, ['active', 'Active']) === 'نعم';
         const dept = normalizeDepartment(pickCell(row, ['department', 'Department']));
-        const profile = { id, year, dept, active };
-        facultyByYearId[`${year}|${id}`] = profile;
-        if (!facultyById[id]) facultyById[id] = [];
-        facultyById[id].push(profile);
+        const rank = normalizeRank(pickCell(row, ['rank', 'Rank']));
 
+        if (dept) {
+            if (!deptIds[dept]) deptIds[dept] = new Set();
+            deptIds[dept].add(id);
+        }
         if (!active || !dept) return;
-        const key = `${year}|${dept}`;
-        if (!facultyByYearDept[key]) facultyByYearDept[key] = new Set();
-        facultyByYearDept[key].add(id);
+
+        if (!RESEARCH_KPI_EXCLUDED_RANKS.has(rank)) {
+            const key = `${year}|${dept}`;
+            if (!eligibleIdsByYearDept[key]) eligibleIdsByYearDept[key] = new Set();
+            eligibleIdsByYearDept[key].add(id);
+        }
     });
-    Object.values(facultyById).forEach(list => list.sort((a,b) => a.year - b.year));
+
+    // author -> depts (من جميع سنوات faculty كما في موقع الأنشطة)
+    const authorDeptMap = {};
+    Object.entries(deptIds).forEach(([dept, idsSet]) => {
+        idsSet.forEach(fid => {
+            if (!authorDeptMap[fid]) authorDeptMap[fid] = new Set();
+            authorDeptMap[fid].add(dept);
+        });
+    });
 
     // aggregates per year+dept
-    const publishedMembersByYearDept = {};
-    const researchCountByYearDept = {};
-    const citationsByYearDept = {};
+    const publishingMembersByYearDept = {};
+    const publicationsCountByYearDept = {};
+    const citationsTotalByYearDept = {};
 
     publicationsRows.forEach(pub => {
         const year = parseInt(pickCell(pub, ['year', 'Year']), 10);
@@ -338,21 +368,24 @@ async function applyResearchIndicatorsFromActivities(rows) {
 
         const departmentsTouched = new Set();
         authorIds.forEach(fid => {
-            const profile = resolveFacultyDeptForYear(facultyByYearId, facultyById, year, fid);
-            if (!profile || !profile.active || !profile.dept) return;
-
-            const ydKey = `${year}|${profile.dept}`;
-            if (!publishedMembersByYearDept[ydKey]) publishedMembersByYearDept[ydKey] = new Set();
-            publishedMembersByYearDept[ydKey].add(fid);
-            departmentsTouched.add(profile.dept);
+            const depts = authorDeptMap[fid];
+            if (!depts) return;
+            depts.forEach(d => departmentsTouched.add(d));
         });
 
         if (!departmentsTouched.size) return;
         const citations = parseCitationValue(pickCell(pub, ['citations_range', 'Citations', 'citations']), citationsMap);
         departmentsTouched.forEach(dept => {
             const ydKey = `${year}|${dept}`;
-            researchCountByYearDept[ydKey] = (researchCountByYearDept[ydKey] || 0) + 1;
-            citationsByYearDept[ydKey] = (citationsByYearDept[ydKey] || 0) + citations;
+            publicationsCountByYearDept[ydKey] = (publicationsCountByYearDept[ydKey] || 0) + 1;
+            citationsTotalByYearDept[ydKey] = (citationsTotalByYearDept[ydKey] || 0) + citations;
+
+            const eligible = eligibleIdsByYearDept[ydKey];
+            if (!eligible || !eligible.size) return;
+            if (!publishingMembersByYearDept[ydKey]) publishingMembersByYearDept[ydKey] = new Set();
+            authorIds.forEach(fid => {
+                if (eligible.has(fid)) publishingMembersByYearDept[ydKey].add(fid);
+            });
         });
     });
 
@@ -362,18 +395,20 @@ async function applyResearchIndicatorsFromActivities(rows) {
         const dept = normalizeDepartment(r.Dept_aName);
         const ydKey = `${year}|${dept}`;
 
-        const facultySet = facultyByYearDept[ydKey];
-        if (!facultySet || !facultySet.size) return;
+        const eligibleSet = eligibleIdsByYearDept[ydKey];
+        if (!eligibleSet || !eligibleSet.size) return;
 
-        const facultyTotal = facultySet.size;
-        const published = (publishedMembersByYearDept[ydKey] || new Set()).size;
-        const researchCount = researchCountByYearDept[ydKey] || 0;
-        const citations = citationsByYearDept[ydKey] || 0;
+        const facultyTotal = eligibleSet.size; // مطابق لـ totalEligibleMembers في موقع الأنشطة
+        const facultyPublished = (publishingMembersByYearDept[ydKey] || new Set()).size;
+        const publicationsCount = publicationsCountByYearDept[ydKey] || 0;
+        const citationsTotal = citationsTotalByYearDept[ydKey] || 0;
+        const citationsPerPublication = publicationsCount > 0 ? (citationsTotal / publicationsCount) : 0;
 
         r.faculty_total = facultyTotal;
-        r.faculty_published = published;
-        r.research_count = researchCount;
-        r.citations = Math.round(citations);
+        r.faculty_published = facultyPublished;
+        r.research_count = publicationsCount;
+        r.citations = Math.round(citationsTotal * 10) / 10;
+        r.citations_per_publication = Math.round(citationsPerPublication * 10) / 10;
         r.research_source = 'faculty_activities_live';
         appliedRows++;
     });
@@ -687,7 +722,7 @@ function parseCSV(text) {
             'prev_new_count','new_4_ago_count',
             'sections_total','sections_male','sections_female',
             'faculty_total','faculty_phd','faculty_male','faculty_female','faculty_published',
-            'research_count','citations',
+            'research_count','citations','citations_per_publication',
             'eval_courses','eval_experience','eval_employers',
             'performance_rate','employment_rate'
         ];
@@ -754,17 +789,21 @@ function calcKPIs(d, degree) {
         kpi.student_faculty_ratio = null;
     }
 
-    // نسبة النشر العلمي
-    kpi.publication_pct = d.faculty_total > 0 && d.faculty_published > 0
+    // نسبة النشر العلمي (مطابقة لموقع الأنشطة: عدد الأعضاء الناشرين ÷ الأعضاء المؤهلين)
+    kpi.publication_pct = d.faculty_total > 0
         ? pct(d.faculty_published, d.faculty_total) : null;
 
-    // البحوث/عضو
-    kpi.research_per_faculty = d.faculty_total > 0 && d.research_count > 0
+    // البحوث/عضو (مطابقة لموقع الأنشطة)
+    kpi.research_per_faculty = d.faculty_total > 0
         ? Math.round((d.research_count / d.faculty_total) * 100) / 100 : null;
 
-    // الاقتباسات/عضو
-    kpi.citations_per_faculty = d.faculty_total > 0 && d.citations > 0
-        ? Math.round((d.citations / d.faculty_total) * 10) / 10 : null;
+    // متوسط الاقتباسات لكل بحث (مطابقة لموقع الأنشطة)
+    if (d.research_source === 'faculty_activities_live' && Number.isFinite(d.citations_per_publication)) {
+        kpi.citations_per_faculty = Math.round(d.citations_per_publication * 10) / 10;
+    } else {
+        kpi.citations_per_faculty = d.faculty_total > 0
+            ? Math.round((d.citations / d.faculty_total) * 10) / 10 : null;
+    }
 
     kpi.student_publication = null;
     kpi.patents = null;

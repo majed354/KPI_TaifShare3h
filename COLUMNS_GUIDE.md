@@ -73,13 +73,13 @@
 | نسبة الطلاب/هيئة التدريس | `students_total ÷ faculty_FTE` (تدريس فعلي) أو `faculty_total` كاحتياطي |
 | نسبة النشر العلمي (%) | `(faculty_published ÷ faculty_total) × 100` |
 | البحوث/عضو هيئة تدريس | `research_count ÷ faculty_total` |
-| الاقتباسات/عضو هيئة تدريس | `citations ÷ faculty_total` |
+| متوسط الاقتباسات لكل بحث | `citations ÷ research_count` |
 | متوسط الطلاب/شعبة | `students_total ÷ sections_total` |
 | معدل التخرج بالوقت المحدد (%) | `(graduates_ontime ÷ graduates_total) × 100` |
 | عدد الطالبات (إذا فارغ) | `students_total - students_male` |
 | عدد الدوليين (إذا فارغ) | `students_total - students_saudi` |
 
-> ملاحظة: حقول البحث (`faculty_published`, `research_count`, `citations`) يمكن تحديثها حيًا من مشروع
+> ملاحظة: حقول البحث (`faculty_published`, `research_count`, `citations`, `citations_per_publication`) يمكن تحديثها حيًا من مشروع
 > `faculty-activities`، وتُطبّق على جميع برامج القسم في نفس السنة.
 
 ---
