@@ -37,6 +37,7 @@ let allRows = [];      // raw rows from CSV
 let programs = [];     // organized {name, degree, dept, years:{y: data}}
 let charts = {};       // Chart instances
 let currentProg = null;// for export
+let compareThirdEnabled = false;
 let gradData = [];     // graduate records
 let ncData = [];       // non-completer records
 
@@ -1218,148 +1219,167 @@ function renderTrendChart(prog) {
 // المقارنة
 // ========================================
 function initCompare() {
-    // fill selects
-    const progOpts = '<option value="">-- اختر --</option>' +
-        programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree})</option>`).join('');
-    document.getElementById('cmp-prog').innerHTML = progOpts;
-    document.getElementById('cmp-p1').innerHTML = progOpts;
-    document.getElementById('cmp-p2').innerHTML = progOpts;
+    const progOpts = '<option value="">-- اختر البرنامج --</option>' +
+        programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree}) - ${p.dept}</option>`).join('');
+    ['cmp-a-prog','cmp-b-prog','cmp-c-prog'].forEach(id => {
+        document.getElementById(id).innerHTML = progOpts;
+    });
 
-    const yearOpts = '<option value="">-- اختر --</option>' +
-        getAvailableYears().map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
-    document.getElementById('cmp-year').innerHTML = yearOpts;
-
-    // Mode toggle
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('cmp-years-form').classList.toggle('hidden', btn.dataset.mode !== 'years');
-            document.getElementById('cmp-progs-form').classList.toggle('hidden', btn.dataset.mode !== 'progs');
+    ['a','b','c'].forEach(slot => {
+        document.getElementById(`cmp-${slot}-prog`).addEventListener('change', () => {
+            populateCompareYears(slot);
             document.getElementById('cmp-results').classList.add('hidden');
-            document.getElementById('cmp-btn').disabled = true;
+            updateCmpBtn();
+        });
+        document.getElementById(`cmp-${slot}-year`).addEventListener('change', () => {
+            document.getElementById('cmp-results').classList.add('hidden');
+            updateCmpBtn();
         });
     });
 
-    // Years mode
-    document.getElementById('cmp-prog').addEventListener('change', e => {
-        if (e.target.value !== '') {
-            const idx = parseInt(e.target.value);
-            const p = programs[idx];
-            const years = Object.keys(p.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort();
-            const opts = '<option value="">--</option>' + years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
-            document.getElementById('cmp-y1').innerHTML = opts;
-            document.getElementById('cmp-y2').innerHTML = opts;
-            document.getElementById('cmp-y1').disabled = false;
-            document.getElementById('cmp-y2').disabled = false;
-        }
+    document.getElementById('cmp-add-third').addEventListener('click', () => {
+        compareThirdEnabled = true;
+        document.getElementById('cmp-slot-c').classList.remove('hidden');
+        document.getElementById('cmp-add-third').classList.add('hidden');
+        document.getElementById('cmp-remove-third').classList.remove('hidden');
         updateCmpBtn();
     });
 
-    // Programs mode
-    document.getElementById('cmp-year').addEventListener('change', e => {
-        if (e.target.value) {
-            const yr = parseInt(e.target.value);
-            const avail = programs.filter(p => p.years[yr]);
-            const opts = '<option value="">--</option>' + avail.map((p,i) => {
-                const realIdx = programs.indexOf(p);
-                return `<option value="${realIdx}">${p.name} (${p.degree})</option>`;
-            }).join('');
-            document.getElementById('cmp-p1').innerHTML = opts;
-            document.getElementById('cmp-p2').innerHTML = opts;
-            document.getElementById('cmp-p1').disabled = false;
-            document.getElementById('cmp-p2').disabled = false;
-        }
+    document.getElementById('cmp-remove-third').addEventListener('click', () => {
+        compareThirdEnabled = false;
+        document.getElementById('cmp-slot-c').classList.add('hidden');
+        document.getElementById('cmp-add-third').classList.remove('hidden');
+        document.getElementById('cmp-remove-third').classList.add('hidden');
+        document.getElementById('cmp-c-prog').value = '';
+        const cYear = document.getElementById('cmp-c-year');
+        cYear.innerHTML = '<option value="">-- اختر السنة --</option>';
+        cYear.disabled = true;
+        cYear.value = '';
+        document.getElementById('cmp-results').classList.add('hidden');
         updateCmpBtn();
-    });
-
-    ['cmp-y1','cmp-y2','cmp-p1','cmp-p2'].forEach(id => {
-        document.getElementById(id).addEventListener('change', updateCmpBtn);
     });
 
     document.getElementById('cmp-btn').addEventListener('click', showComparison);
+    updateCmpBtn();
+}
+
+function populateCompareYears(slot) {
+    const progSel = document.getElementById(`cmp-${slot}-prog`);
+    const yearSel = document.getElementById(`cmp-${slot}-year`);
+    yearSel.value = '';
+    if (!progSel.value) {
+        yearSel.innerHTML = '<option value="">-- اختر السنة --</option>';
+        yearSel.disabled = true;
+        return;
+    }
+    const idx = parseInt(progSel.value, 10);
+    const p = programs[idx];
+    if (!p) {
+        yearSel.innerHTML = '<option value="">-- اختر السنة --</option>';
+        yearSel.disabled = true;
+        return;
+    }
+    const years = Object.keys(p.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort((a,b) => a - b);
+    yearSel.innerHTML = '<option value="">-- اختر السنة --</option>' +
+        years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
+    yearSel.disabled = false;
+}
+
+function getCompareSelection(slot) {
+    const progValue = document.getElementById(`cmp-${slot}-prog`).value;
+    const yearValue = document.getElementById(`cmp-${slot}-year`).value;
+    const hasProgram = progValue !== '';
+    const hasYear = yearValue !== '';
+    if (!hasProgram || !hasYear) return null;
+    const programIndex = parseInt(progValue, 10);
+    const year = parseInt(yearValue, 10);
+    const program = programs[programIndex];
+    if (!program || !program.years[year]) return null;
+    return { slot, programIndex, program, year, data: program.years[year] };
 }
 
 function updateCmpBtn() {
-    const mode = document.querySelector('.mode-btn.active').dataset.mode;
-    let valid = false;
-    if (mode === 'years') {
-        const p = document.getElementById('cmp-prog').value;
-        const y1 = document.getElementById('cmp-y1').value;
-        const y2 = document.getElementById('cmp-y2').value;
-        valid = p && y1 && y2 && y1 !== y2;
-    } else {
-        const yr = document.getElementById('cmp-year').value;
-        const p1 = document.getElementById('cmp-p1').value;
-        const p2 = document.getElementById('cmp-p2').value;
-        valid = yr && p1 && p2 && p1 !== p2;
-    }
+    const first = getCompareSelection('a');
+    const second = getCompareSelection('b');
+    const third = compareThirdEnabled ? getCompareSelection('c') : { slot: 'c' };
+    const valid = !!(first && second && (!compareThirdEnabled || third));
     document.getElementById('cmp-btn').disabled = !valid;
 }
 
-function showComparison() {
-    const mode = document.querySelector('.mode-btn.active').dataset.mode;
-    let d1, d2, t1, t2, deg;
+function isGradDegree(deg) {
+    return ['الماجستير','دكتوراه'].includes(String(deg || '').trim());
+}
 
-    if (mode === 'years') {
-        const pIdx = parseInt(document.getElementById('cmp-prog').value);
-        const y1 = parseInt(document.getElementById('cmp-y1').value);
-        const y2 = parseInt(document.getElementById('cmp-y2').value);
-        const p = programs[pIdx];
-        d1 = p.years[y1]; d2 = p.years[y2];
-        t1 = fmtYear(y1); t2 = fmtYear(y2);
-        deg = p.degree;
-    } else {
-        const yr = parseInt(document.getElementById('cmp-year').value);
-        const p1 = programs[parseInt(document.getElementById('cmp-p1').value)];
-        const p2 = programs[parseInt(document.getElementById('cmp-p2').value)];
-        d1 = p1.years[yr]; d2 = p2.years[yr];
-        t1 = p1.name; t2 = p2.name;
-        deg = p1.degree;
-    }
+function compareShortLabel(entry) {
+    return `${entry.program.name} - ${fmtYear(entry.year)}`;
+}
 
-    if (!d1 || !d2) return alert('لا توجد بيانات كافية');
-
-    const kpi1 = calcKPIs(d1, deg);
-    const kpi2 = calcKPIs(d2, deg);
-
-    document.getElementById('cmp-th1').textContent = t1;
-    document.getElementById('cmp-th2').textContent = t2;
-
-    const tbody = document.getElementById('cmp-tbody');
-    const chartLabels = [];
-    const chartData1 = [];
-    const chartData2 = [];
-
-    tbody.innerHTML = INDICATORS
-        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(deg))
-        .map(ind => {
-            const v1 = kpi1[ind.key];
-            const v2 = kpi2[ind.key];
-            const f1 = fmtKPI(v1, ind.unit);
-            const f2 = fmtKPI(v2, ind.unit);
-
-            let diffHtml = '<span class="diff-same">—</span>';
-            if (ind.numeric && v1 != null && v2 != null) {
-                const diff = parseFloat(v1) - parseFloat(v2);
-                if (diff > 0) diffHtml = `<span class="diff-up">+${diff.toFixed(2)}</span>`;
-                else if (diff < 0) diffHtml = `<span class="diff-down">${diff.toFixed(2)}</span>`;
-                else diffHtml = `<span class="diff-same">0</span>`;
-
-                chartLabels.push(ind.name.length > 20 ? ind.name.slice(0,20) + '..' : ind.name);
-                chartData1.push(parseFloat(v1));
-                chartData2.push(parseFloat(v2));
+function buildComparisonModel(entries) {
+    const showGradIndicators = entries.some(e => isGradDegree(e.program.degree));
+    const indicators = INDICATORS.filter(ind => !ind.gradOnly || showGradIndicators);
+    const header = [
+        'المؤشر',
+        ...entries.map(e => e.label),
+        ...entries.slice(1).map((e, idx) => `الفرق (${idx + 2} - 1)`)
+    ];
+    const rows = indicators.map(ind => {
+        const rawValues = entries.map(e => e.kpi[ind.key]);
+        const formattedValues = rawValues.map(v => fmtKPI(v, ind.unit).text);
+        const diffs = [];
+        for (let i = 1; i < rawValues.length; i++) {
+            const base = rawValues[0];
+            const val = rawValues[i];
+            if (ind.numeric && base != null && val != null) {
+                diffs.push(Math.round((parseFloat(val) - parseFloat(base)) * 100) / 100);
+            } else {
+                diffs.push(null);
             }
+        }
+        return { indicator: ind, rawValues, formattedValues, diffs };
+    });
+    return { header, rows, indicators };
+}
 
-            return `<tr>
-                <td>${ind.name}</td>
-                <td>${f1.text}</td>
-                <td>${f2.text}</td>
-                <td>${diffHtml}</td>
-            </tr>`;
-        }).join('');
+function formatDiffCell(diff) {
+    if (diff == null) return '<span class="diff-same">—</span>';
+    if (diff > 0) return `<span class="diff-up">+${fmtNumFlex(diff, 2)}</span>`;
+    if (diff < 0) return `<span class="diff-down">${fmtNumFlex(diff, 2)}</span>`;
+    return '<span class="diff-same">0</span>';
+}
 
-    // Compare chart
+function showComparison() {
+    const selections = [getCompareSelection('a'), getCompareSelection('b')];
+    if (compareThirdEnabled) selections.push(getCompareSelection('c'));
+    if (selections.some(s => !s)) return alert('أكمل اختيار البرنامج والسنة لكل مقارنة مطلوبة');
+
+    const entries = selections.map(sel => ({
+        ...sel,
+        label: `${sel.program.name} (${sel.program.degree}) - ${fmtYear(sel.year)}`,
+        shortLabel: compareShortLabel(sel),
+        kpi: calcKPIs(sel.data, sel.program.degree)
+    }));
+
+    const model = buildComparisonModel(entries);
+
+    document.getElementById('cmp-thead').innerHTML =
+        `<tr>${model.header.map(h => `<th>${h}</th>`).join('')}</tr>`;
+
+    document.getElementById('cmp-tbody').innerHTML = model.rows.map(row => {
+        const valueCells = row.formattedValues.map(v => `<td>${v}</td>`).join('');
+        const diffCells = row.diffs.map(d => `<td>${formatDiffCell(d)}</td>`).join('');
+        return `<tr><td>${row.indicator.name}</td>${valueCells}${diffCells}</tr>`;
+    }).join('');
+
+    const chartLabels = [];
+    const chartData = entries.map(() => []);
+    model.rows.forEach(row => {
+        if (!row.indicator.numeric) return;
+        chartLabels.push(row.indicator.name.length > 22 ? `${row.indicator.name.slice(0,22)}...` : row.indicator.name);
+        row.rawValues.forEach((val, idx) => {
+            chartData[idx].push(val == null ? null : parseFloat(val));
+        });
+    });
+
     destroyChart('compare');
     if (chartLabels.length > 0) {
         const ctx = document.getElementById('chart-compare').getContext('2d');
@@ -1367,10 +1387,12 @@ function showComparison() {
             type: 'bar',
             data: {
                 labels: chartLabels,
-                datasets: [
-                    { label: t1, data: chartData1, backgroundColor: '#0d8e8e', borderRadius: 4 },
-                    { label: t2, data: chartData2, backgroundColor: '#c9a227', borderRadius: 4 },
-                ]
+                datasets: entries.map((entry, idx) => ({
+                    label: entry.shortLabel,
+                    data: chartData[idx],
+                    backgroundColor: CHART_COLORS[idx % CHART_COLORS.length],
+                    borderRadius: 4
+                }))
             },
             options: {
                 responsive: true,
@@ -1384,8 +1406,7 @@ function showComparison() {
         });
     }
 
-    // Store for export
-    currentProg = { cmp: true, d1, d2, t1, t2, deg, kpi1, kpi2 };
+    currentProg = { cmp: true, entries, model };
     document.getElementById('cmp-results').classList.remove('hidden');
     document.getElementById('cmp-results').scrollIntoView({ behavior: 'smooth' });
 }
@@ -1393,102 +1414,157 @@ function showComparison() {
 // ========================================
 // التصدير
 // ========================================
-function exportPDF() {
-    if (!currentProg || currentProg.cmp) return;
+function safeFileName(text) {
+    return String(text || '')
+        .replace(/[\\/:*?"<>|]/g, '-')
+        .replace(/\s+/g, '-');
+}
+
+function formatDiffText(diff) {
+    if (diff == null) return '—';
+    if (diff > 0) return `+${fmtNumFlex(diff, 2)}`;
+    if (diff < 0) return fmtNumFlex(diff, 2);
+    return '0';
+}
+
+function csvEscape(value) {
+    const text = value == null ? '' : String(value);
+    if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+    return text;
+}
+
+function downloadCSV(filename, rows) {
+    const content = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+    const blob = new Blob([`\uFEFF${content}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
+async function exportSectionAsPDF(elementId, filename) {
+    if (!window.jspdf || !window.html2canvas) {
+        alert('ميزة PDF تحتاج تحميل مكتبة html2canvas بشكل صحيح.');
+        return;
+    }
+    const target = document.getElementById(elementId);
+    if (!target) return;
+
+    const canvas = await window.html2canvas(target, {
+        scale: 2.2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+    });
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('p','mm','a4');
-    const d = currentProg.data;
-    const kpi = calcKPIs(d, currentProg.prog.degree);
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 8;
+    const contentWidth = pageWidth - (margin * 2);
+    const contentHeight = (canvas.height * contentWidth) / canvas.width;
+    const pageContentHeight = pageHeight - (margin * 2);
 
-    doc.setFontSize(16);
-    doc.text('KPI - ' + currentProg.prog.name + ' (' + currentProg.prog.degree + ')', 105, 20, { align: 'center' });
-    doc.setFontSize(12);
-    doc.text(fmtYear(currentProg.year), 105, 28, { align: 'center' });
+    let remaining = contentHeight;
+    let position = margin;
+    doc.addImage(imgData, 'JPEG', margin, position, contentWidth, contentHeight, undefined, 'FAST');
+    remaining -= pageContentHeight;
+    while (remaining > 0) {
+        doc.addPage();
+        position = margin - (contentHeight - remaining);
+        doc.addImage(imgData, 'JPEG', margin, position, contentWidth, contentHeight, undefined, 'FAST');
+        remaining -= pageContentHeight;
+    }
 
-    const body = INDICATORS
-        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.prog.degree))
+    doc.save(filename);
+}
+
+function getProgramIndicatorRows() {
+    if (!currentProg || currentProg.cmp) return [];
+    const kpi = calcKPIs(currentProg.data, currentProg.prog.degree);
+    return INDICATORS
+        .filter(ind => !ind.gradOnly || isGradDegree(currentProg.prog.degree))
         .map(ind => {
             const f = fmtKPI(kpi[ind.key], ind.unit);
             return [ind.name, f.text, ind.unit];
         });
+}
 
-    doc.autoTable({
-        startY: 35,
-        head: [['Indicator','Value','Unit']],
-        body,
-        styles: { halign: 'center', fontSize: 9 },
-        headStyles: { fillColor: [13,110,110] }
-    });
-    doc.save(`KPI-${currentProg.prog.name}-${fmtYear(currentProg.year)}.pdf`);
+async function exportPDF() {
+    if (!currentProg || currentProg.cmp) return;
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.pdf`;
+    await exportSectionAsPDF('prog-results', filename);
 }
 
 function exportExcel() {
     if (!currentProg || currentProg.cmp) return;
-    const d = currentProg.data;
-    const kpi = calcKPIs(d, currentProg.prog.degree);
     const rows = [
         ['تقرير مؤشرات الأداء'],
-        ['البرنامج: ' + currentProg.prog.name],
-        ['الدرجة: ' + currentProg.prog.degree],
-        ['السنة: ' + fmtYear(currentProg.year)],
+        ['البرنامج', currentProg.prog.name],
+        ['الدرجة', currentProg.prog.degree],
+        ['السنة', fmtYear(currentProg.year)],
         [],
-        ['المؤشر','القيمة','الوحدة'],
-        ...INDICATORS
-            .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.prog.degree))
-            .map(ind => {
-                const f = fmtKPI(kpi[ind.key], ind.unit);
-                return [ind.name, f.text, ind.unit];
-            })
+        ['المؤشر', 'القيمة', 'الوحدة'],
+        ...getProgramIndicatorRows()
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{ wch: 42 }, { wch: 18 }, { wch: 12 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'المؤشرات');
-    XLSX.writeFile(wb, `مؤشرات-${currentProg.prog.name}-${fmtYear(currentProg.year)}.xlsx`);
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.xlsx`;
+    XLSX.writeFile(wb, filename);
 }
 
-function exportComparePDF() {
+function exportCSV() {
+    if (!currentProg || currentProg.cmp) return;
+    const rows = [
+        ['المؤشر', 'القيمة', 'الوحدة'],
+        ...getProgramIndicatorRows()
+    ];
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.csv`;
+    downloadCSV(filename, rows);
+}
+
+function getCompareExportRows() {
+    if (!currentProg || !currentProg.cmp || !currentProg.model) return [];
+    return currentProg.model.rows.map(row => [
+        row.indicator.name,
+        ...row.formattedValues,
+        ...row.diffs.map(formatDiffText)
+    ]);
+}
+
+async function exportComparePDF() {
     if (!currentProg || !currentProg.cmp) return;
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('p','mm','a4');
-    doc.setFontSize(14);
-    doc.text('KPI Comparison', 105, 20, { align: 'center' });
-
-    const body = INDICATORS
-        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.deg))
-        .map(ind => {
-            const f1 = fmtKPI(currentProg.kpi1[ind.key], ind.unit);
-            const f2 = fmtKPI(currentProg.kpi2[ind.key], ind.unit);
-            return [ind.name, f1.text, f2.text];
-        });
-
-    doc.autoTable({
-        startY: 30,
-        head: [['Indicator', currentProg.t1, currentProg.t2]],
-        body,
-        styles: { halign: 'center', fontSize: 9 },
-        headStyles: { fillColor: [13,110,110] }
-    });
-    doc.save('KPI-Comparison.pdf');
+    const filename = `مقارنة-المؤشرات-${Date.now()}.pdf`;
+    await exportSectionAsPDF('cmp-export-area', filename);
 }
 
 function exportCompareExcel() {
-    if (!currentProg || !currentProg.cmp) return;
+    if (!currentProg || !currentProg.cmp || !currentProg.model) return;
     const rows = [
         ['مقارنة المؤشرات'],
+        ...currentProg.entries.map((e, idx) => [`مدخل ${idx + 1}`, e.label]),
         [],
-        ['المؤشر', currentProg.t1, currentProg.t2],
-        ...INDICATORS
-            .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(currentProg.deg))
-            .map(ind => {
-                const f1 = fmtKPI(currentProg.kpi1[ind.key], ind.unit);
-                const f2 = fmtKPI(currentProg.kpi2[ind.key], ind.unit);
-                return [ind.name, f1.text, f2.text];
-            })
+        currentProg.model.header,
+        ...getCompareExportRows()
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
+    const colCount = currentProg.model.header.length;
+    ws['!cols'] = Array.from({ length: colCount }, (_, idx) => ({ wch: idx === 0 ? 40 : 20 }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'المقارنة');
     XLSX.writeFile(wb, 'مقارنة-المؤشرات.xlsx');
+}
+
+function exportCompareCSV() {
+    if (!currentProg || !currentProg.cmp || !currentProg.model) return;
+    const rows = [currentProg.model.header, ...getCompareExportRows()];
+    downloadCSV('مقارنة-المؤشرات.csv', rows);
 }
 
 // ========================================

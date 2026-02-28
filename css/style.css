@@ -429,47 +429,75 @@ body {
 /* ============================
    المقارنة
    ============================ */
-.mode-toggle {
+.cmp-builder {
+    margin-bottom: 16px;
+}
+.cmp-help {
+    margin-bottom: 14px;
+    font-size: 0.9rem;
+    color: var(--text-light);
+}
+.cmp-slots {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+.cmp-slot {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fbfcfe;
+    padding: 12px;
+}
+.cmp-slot.required {
+    border-right: 4px solid var(--primary);
+}
+.cmp-slot.optional {
+    border-right: 4px solid var(--accent);
+}
+.cmp-slot-head {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
+    margin-bottom: 8px;
 }
-.mode-btn {
-    flex: 1;
-    padding: 10px 16px;
-    border: 2px solid var(--border);
-    background: #fff;
-    border-radius: 8px;
-    font-family: var(--font);
-    font-size: 0.85rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
-    min-width: 200px;
-}
-.mode-btn:hover { border-color: var(--primary); }
-.mode-btn.active {
-    background: var(--primary);
-    color: #fff;
-    border-color: var(--primary);
+.cmp-slot-head h4 {
+    margin: 0;
+    font-size: 0.92rem;
     font-weight: 700;
+    color: var(--primary-dark);
 }
-.cmp-form { margin-bottom: 16px; }
 .compare-pair {
     display: flex;
     align-items: flex-end;
     gap: 12px;
-    margin-top: 12px;
+    margin-top: 8px;
     flex-wrap: wrap;
 }
-.vs {
-    font-weight: 800;
-    color: var(--accent);
-    font-size: 1.1rem;
-    align-self: center;
-    padding-bottom: 4px;
+.cmp-slot .form-group {
+    min-width: 130px;
+}
+.cmp-slot .form-group select {
+    min-height: 42px;
+    font-weight: 700;
+    color: var(--primary-dark);
+    background: #fff;
+}
+.cmp-slot .form-group select option {
+    color: var(--text);
+    background: #fff;
+}
+.cmp-slot .form-group select:disabled {
+    opacity: 1;
+    color: var(--text-light);
+    background: #f3f4f6;
+}
+.cmp-actions {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 .cmp-header {
     display: flex;
@@ -479,11 +507,13 @@ body {
     gap: 8px;
 }
 .cmp-header h3 { margin: 0; border: none; padding: 0; }
-.cmp-table td:nth-child(2), .cmp-table td:nth-child(3) {
+.cmp-table td:not(:first-child) {
     font-weight: 700;
     text-align: center;
 }
-.cmp-table td:nth-child(4) { text-align: center; font-weight: 600; }
+.cmp-table th, .cmp-table td {
+    white-space: nowrap;
+}
 .diff-up { color: var(--success); }
 .diff-down { color: var(--danger); }
 .diff-same { color: var(--text-light); }
@@ -652,10 +682,9 @@ body {
     .selector-row { flex-direction: column; }
     .form-group { min-width: 100%; }
     .compare-pair { flex-direction: column; }
-    .vs { align-self: center; }
     .view-top { flex-direction: column; align-items: flex-start; }
     .chart-wrap, .chart-wrap.chart-tall { height: 260px; }
-    .mode-btn { min-width: 140px; font-size: 0.78rem; }
+    .cmp-actions .btn-primary { width: 100%; }
     .kpi-grid { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
