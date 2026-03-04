@@ -30,7 +30,7 @@ const INDICATORS = [
     { id:3,  name:"معدّل التخرج بالوقت المحدد",      unit:"%",    key:"graduation_rate", numeric:true },
     { id:4,  name:"معدّل استبقاء طلاب السنة الأولى",  unit:"%",    key:"retention_rate",  numeric:true },
     { id:5,  name:"مستوى أداء الطالب",                unit:"%",    key:"student_performance", numeric:true },
-    { id:6,  name:"توظيف الخريجين",                   unit:"%",    key:"employment_rate", numeric:true },
+    { id:6,  name:"توظيف الخريجين أو التحاقهم بالدراسات العليا", unit:"%", key:"employment_rate", numeric:true },
     { id:7,  name:"تقويم جهات التوظيف",               unit:"درجة", key:"employer_eval",   numeric:true },
     { id:8,  name:"نسبة الطلاب/هيئة التدريس",         unit:"نسبة", key:"student_faculty_ratio" },
     { id:9,  name:"نسبة النشر العلمي",                unit:"%",    key:"publication_pct", numeric:true },
@@ -325,8 +325,11 @@ function parseSurveyEmploymentStatus(value) {
     const raw = normalizeArabicText(value);
     if (!raw) return null;
 
-    const positive = ['موظف', 'يعمل', 'أعمل', 'اعمل', 'عمل حر', 'رائد أعمال', 'صاحب عمل'];
-    const negative = ['أبحث عن عمل', 'ابحث عن عمل', 'باحث عن عمل', 'عاطل', 'لا أعمل', 'غير موظف', 'أكمل دراسات عليا'];
+    const positive = [
+        'موظف', 'يعمل', 'أعمل', 'اعمل', 'عمل حر', 'رائد أعمال', 'صاحب عمل',
+        'أكمل دراسات عليا', 'اكمل دراسات عليا', 'مكمل دراسات عليا', 'دراسات عليا'
+    ];
+    const negative = ['أبحث عن عمل', 'ابحث عن عمل', 'باحث عن عمل', 'عاطل', 'لا أعمل', 'غير موظف'];
 
     if (positive.some(x => raw.includes(x))) return true;
     if (negative.some(x => raw.includes(x))) return false;
@@ -1138,11 +1141,24 @@ function parseCSV(text) {
             'prev_new_count','new_4_ago_count',
             'sections_total','sections_male','sections_female',
             'faculty_total','faculty_phd','faculty_male','faculty_female','faculty_published',
-            'research_count','citations','citations_per_publication',
+            'research_count','citations','citations_per_publication'
+        ];
+        numFields.forEach(f => { row[f] = parseFloat(row[f]) || 0; });
+
+        const optionalMetricFields = [
             'eval_courses','eval_experience','eval_employers',
             'performance_rate','employment_rate'
         ];
-        numFields.forEach(f => { row[f] = parseFloat(row[f]) || 0; });
+        optionalMetricFields.forEach(f => {
+            const raw = String(row[f] || '').trim();
+            if (raw === '') {
+                row[f] = null;
+                return;
+            }
+            const parsed = parseFloat(raw);
+            row[f] = Number.isFinite(parsed) ? parsed : null;
+        });
+
         row.Semester = parseInt(row.Semester) || 0;
         // skip year 38 (base year only)
         if (row.Semester === 38) continue;
@@ -1183,11 +1199,11 @@ function getAvailableYears() {
 // ========================================
 function calcKPIs(d, degree) {
     const kpi = {};
-    kpi.experience_eval = d.eval_experience || null;
-    kpi.course_eval = d.eval_courses || null;
-    kpi.employer_eval = d.eval_employers || null;
-    kpi.student_performance = d.performance_rate || null;
-    kpi.employment_rate = d.employment_rate || null;
+    kpi.experience_eval = d.eval_experience ?? null;
+    kpi.course_eval = d.eval_courses ?? null;
+    kpi.employer_eval = d.eval_employers ?? null;
+    kpi.student_performance = d.performance_rate ?? null;
+    kpi.employment_rate = d.employment_rate ?? null;
 
     // معدل التخرج بالوقت المحدد
     kpi.graduation_rate = pct(d.graduates_ontime, d.new_4_ago_count);
