@@ -12,8 +12,18 @@ const CHART_COLORS = [
     '#8b5cf6','#ec4899','#f97316','#06b6d4','#6366f1',
     '#22c55e','#eab308','#14b8a6','#e11d48','#7c3aed','#0ea5e9'
 ];
+const KPI_CONFIG = (typeof window !== 'undefined' && window.KPI_CONFIG) ? window.KPI_CONFIG : {};
+const GRADUATES_SURVEY_SHEET_URL = String(KPI_CONFIG.graduatesSurveySheetUrl || '').trim();
+const GRADUATES_SURVEY_BACHELOR_SHEET_URL = String(KPI_CONFIG.graduatesSurveyBachelorSheetUrl || '').trim();
+const GRADUATES_SURVEY_POSTGRAD_SHEET_URL = String(KPI_CONFIG.graduatesSurveyPostgradSheetUrl || '').trim();
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
 const RESEARCH_KPI_EXCLUDED_RANKS = new Set(['معيد', 'محاضر', 'متعاون', 'مدرس']);
+const GRADUATE_PROGRAM_ALIASES = {
+    'القران وعلومه': 'القراءات',
+    'القرآن وعلومه': 'القراءات',
+    'الدراسات القرانيه': 'الدراسات القرآنية',
+    'الانظمة': 'الأنظمة',
+};
 const INDICATORS = [
     { id:1,  name:"تقويم الطالب لجودة خبرات التعلم", unit:"درجة", key:"experience_eval", numeric:true },
     { id:2,  name:"تقييم الطالب لجودة المقررات",     unit:"درجة", key:"course_eval",     numeric:true },
@@ -29,6 +39,8 @@ const INDICATORS = [
     { id:12, name:"نسبة نشر طلاب الدراسات العليا",   unit:"%",    key:"student_publication", numeric:true, gradOnly:true },
     { id:13, name:"براءات الاختراع",                  unit:"براءة", key:"patents", numeric:true, gradOnly:true },
 ];
+const BACHELOR_DEGREES = new Set(['بكالوريوس']);
+const POSTGRAD_DEGREES = new Set(['الماجستير', 'دكتوراه']);
 
 // ========================================
 // البيانات
@@ -196,6 +208,398 @@ function buildWeights(programKeys, studentsByProgramKey) {
 function normalizeArabicDigits(str) {
     if (str == null) return '';
     return String(str).replace(/[٠-٩]/g, d => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+}
+
+function normalizeArabicText(str) {
+    if (str == null) return '';
+    return normalizeArabicDigits(String(str))
+        .replace(/[\u200E\u200F]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeSurveyProgramName(name) {
+    const base = normalizeArabicText(name)
+        .replace(/^برنامج\s+/,'');
+    if (!base) return '';
+    return GRADUATE_PROGRAM_ALIASES[base] || base;
+}
+
+function parseCSVQuotedRows(text, separator = ',') {
+    if (!text || !text.trim()) return [];
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (ch === '"') {
+            if (inQuotes && text[i + 1] === '"') {
+                cell += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+        if (!inQuotes && ch === separator) {
+            row.push(cell);
+            cell = '';
+            continue;
+        }
+        if (!inQuotes && (ch === '\n' || ch === '\r')) {
+            row.push(cell);
+            cell = '';
+            if (row.some(v => String(v || '').trim() !== '')) rows.push(row);
+            row = [];
+            if (ch === '\r' && text[i + 1] === '\n') i++;
+            continue;
+        }
+        cell += ch;
+    }
+
+    if (cell.length || row.length) {
+        row.push(cell);
+        if (row.some(v => String(v || '').trim() !== '')) rows.push(row);
+    }
+    return rows;
+}
+
+function parseCSVQuotedObjects(text, separator = ',') {
+    const matrix = parseCSVQuotedRows(text, separator);
+    if (matrix.length < 2) return [];
+    const headers = matrix[0].map(h => String(h || '').trim().replace(/^\uFEFF/, ''));
+    const rows = [];
+    for (let i = 1; i < matrix.length; i++) {
+        const vals = matrix[i];
+        const row = {};
+        headers.forEach((h, idx) => { row[h] = String(vals[idx] || '').trim(); });
+        rows.push(row);
+    }
+    return rows;
+}
+
+function extractNumericValues(value) {
+    if (value == null) return [];
+    const normalized = normalizeArabicText(value)
+        .replace(/[٫،]/g, '.')
+        .replace(/[–—]/g, '-');
+    const matches = normalized.match(/\d+(?:\.\d+)?/g);
+    if (!matches) return [];
+    return matches.map(n => parseFloat(n)).filter(Number.isFinite);
+}
+
+function clampValue(value, min, max) {
+    if (!Number.isFinite(value)) return null;
+    return Math.min(max, Math.max(min, value));
+}
+
+function parseRangeOrSingleValue(value, min, max) {
+    const raw = normalizeArabicText(value);
+    if (!raw) return null;
+    const nums = extractNumericValues(raw);
+    if (!nums.length) return null;
+
+    let parsed = nums[0];
+    const hasRange = /-\s*\d/.test(raw);
+    if (hasRange && nums.length >= 2) parsed = (nums[0] + nums[1]) / 2;
+
+    if (/^(?:أقل|اقل)\s*من/.test(raw)) parsed = nums[0] - 0.25;
+    if (/^(?:أعلى|اعلى|أكثر)\s*من/.test(raw)) parsed = nums[0] + 0.25;
+
+    return clampValue(parsed, min, max);
+}
+
+function parseSurveyYear(value) {
+    const nums = extractNumericValues(value).map(n => Math.round(n));
+    if (!nums.length) return null;
+    const fullYear = nums.find(n => n >= 1400);
+    if (fullYear) return fullYear % 100;
+    const candidate = nums[nums.length - 1];
+    if (!candidate) return null;
+    return candidate >= 100 ? candidate % 100 : candidate;
+}
+
+function parseSurveyEmploymentStatus(value) {
+    const raw = normalizeArabicText(value);
+    if (!raw) return null;
+
+    const positive = ['موظف', 'يعمل', 'أعمل', 'اعمل', 'عمل حر', 'رائد أعمال', 'صاحب عمل'];
+    const negative = ['أبحث عن عمل', 'ابحث عن عمل', 'باحث عن عمل', 'عاطل', 'لا أعمل', 'غير موظف', 'أكمل دراسات عليا'];
+
+    if (positive.some(x => raw.includes(x))) return true;
+    if (negative.some(x => raw.includes(x))) return false;
+    return null;
+}
+
+function normalizeHeaderKey(header) {
+    return normalizeArabicText(header).toLowerCase();
+}
+
+function findHeaderByAllParts(headers, parts) {
+    const normalizedParts = parts.map(p => normalizeHeaderKey(p));
+    const match = headers.find(h => {
+        const key = normalizeHeaderKey(h);
+        return normalizedParts.every(part => key.includes(part));
+    });
+    return match || '';
+}
+
+function findHeaderByCandidates(headers, candidates) {
+    for (const parts of candidates) {
+        const hit = findHeaderByAllParts(headers, parts);
+        if (hit) return hit;
+    }
+    return '';
+}
+
+function detectGraduateSurveyColumns(headers) {
+    return {
+        program: findHeaderByCandidates(headers, [
+            ['اسم البرنامج'],
+            ['البرنامج الأكاديمي'],
+            ['البرنامج']
+        ]),
+        year: findHeaderByCandidates(headers, [
+            ['سنة التخرج'],
+            ['سنه التخرج'],
+            ['التخرج من البرنامج']
+        ]),
+        experience: findHeaderByCandidates(headers, [
+            ['تقييمك العام', 'جودة التعلم'],
+            ['جودة خبرات التعلم']
+        ]),
+        status: findHeaderByCandidates(headers, [
+            ['وضعك الحالي بعد التخرج'],
+            ['وضعك الحالي']
+        ]),
+        performance: findHeaderByCandidates(headers, [
+            ['درجتك', 'الاختبارات الوطنية'],
+            ['الاختبارات', 'مهنية']
+        ]),
+        employerEval: findHeaderByCandidates(headers, [
+            ['تقييم رئيسك'],
+            ['تقيّم نفسك'],
+            ['التقييم من ٥'],
+            ['التقييم من 5']
+        ]),
+    };
+}
+
+function resolveGraduateSurveyCsvUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    if (raw.includes('output=csv') || raw.includes('format=csv')) return raw;
+
+    try {
+        const parsed = new URL(raw);
+        const match = parsed.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (!match) return raw;
+        const gidFromHash = parsed.hash.match(/gid=(\d+)/);
+        const gid = parsed.searchParams.get('gid') || (gidFromHash ? gidFromHash[1] : '');
+        return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv${gid ? `&gid=${gid}` : ''}`;
+    } catch {
+        return raw;
+    }
+}
+
+function aggregateGraduateSurveyRows(surveyRows) {
+    if (!surveyRows.length) return { metricsByKey: {}, groups: 0, matchedRows: 0, reason: 'empty' };
+
+    const headers = Object.keys(surveyRows[0]);
+    const columns = detectGraduateSurveyColumns(headers);
+    if (!columns.program || !columns.year) {
+        return { metricsByKey: {}, groups: 0, matchedRows: 0, reason: 'missing-required-columns' };
+    }
+
+    const grouped = {};
+    let matchedRows = 0;
+    surveyRows.forEach(row => {
+        const program = normalizeSurveyProgramName(row[columns.program]);
+        const year = parseSurveyYear(row[columns.year]);
+        if (!program || !year) return;
+
+        const key = `${year}|${program}`;
+        if (!grouped[key]) {
+            grouped[key] = {
+                responses: 0,
+                experienceSum: 0, experienceCount: 0,
+                perfSum: 0, perfCount: 0,
+                employedCount: 0, employmentCount: 0,
+                employerEvalSum: 0, employerEvalCount: 0
+            };
+        }
+        const g = grouped[key];
+        g.responses++;
+        matchedRows++;
+
+        const experience = parseRangeOrSingleValue(row[columns.experience], 1, 5);
+        if (experience != null) {
+            g.experienceSum += experience;
+            g.experienceCount++;
+        }
+
+        const performance = parseRangeOrSingleValue(row[columns.performance], 0, 100);
+        if (performance != null) {
+            g.perfSum += performance;
+            g.perfCount++;
+        }
+
+        const employmentStatus = parseSurveyEmploymentStatus(row[columns.status]);
+        if (employmentStatus != null) {
+            g.employmentCount++;
+            if (employmentStatus) g.employedCount++;
+        }
+
+        const employerEval = parseRangeOrSingleValue(row[columns.employerEval], 1, 5);
+        if (employerEval != null) {
+            g.employerEvalSum += employerEval;
+            g.employerEvalCount++;
+        }
+    });
+
+    const metricsByKey = {};
+    Object.entries(grouped).forEach(([key, g]) => {
+        metricsByKey[key] = {
+            eval_experience: g.experienceCount > 0
+                ? Math.round((g.experienceSum / g.experienceCount) * 100) / 100 : null,
+            performance_rate: g.perfCount > 0
+                ? Math.round((g.perfSum / g.perfCount) * 10) / 10 : null,
+            employment_rate: g.employmentCount > 0
+                ? pct(g.employedCount, g.employmentCount) : null,
+            eval_employers: g.employerEvalCount > 0
+                ? Math.round((g.employerEvalSum / g.employerEvalCount) * 100) / 100 : null,
+        };
+    });
+
+    return {
+        metricsByKey,
+        groups: Object.keys(metricsByKey).length,
+        matchedRows,
+        reason: Object.keys(metricsByKey).length ? '' : 'no-metrics'
+    };
+}
+
+function isDegreeAllowed(row, allowedDegrees) {
+    if (!allowedDegrees || !allowedDegrees.size) return true;
+    const degree = normalizeDegree(row.Degree_aName);
+    return allowedDegrees.has(degree);
+}
+
+function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, sourceLabel = '') {
+    let appliedRows = 0;
+    const matchedGroups = new Set();
+    rows.forEach(row => {
+        if (!isDegreeAllowed(row, allowedDegrees)) return;
+
+        const year = parseInt(row.Semester, 10);
+        const majorKey = `${year}|${normalizeSurveyProgramName(row.Major_aName)}`;
+        const deptKey = `${year}|${normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName))}`;
+        const metrics = metricsByKey[majorKey] || metricsByKey[deptKey];
+        if (!metrics) return;
+
+        let touched = false;
+        if (metrics.eval_experience != null) {
+            row.eval_experience = metrics.eval_experience;
+            touched = true;
+        }
+        if (metrics.performance_rate != null) {
+            row.performance_rate = metrics.performance_rate;
+            touched = true;
+        }
+        if (metrics.employment_rate != null) {
+            row.employment_rate = metrics.employment_rate;
+            touched = true;
+        }
+        if (metrics.eval_employers != null) {
+            row.eval_employers = metrics.eval_employers;
+            touched = true;
+        }
+        if (touched) {
+            const baseSource = metricsByKey[majorKey] ? 'graduates_survey_program' : 'graduates_survey_dept';
+            row.survey_source = sourceLabel ? `${baseSource}_${sourceLabel}` : baseSource;
+            matchedGroups.add(metricsByKey[majorKey] ? majorKey : deptKey);
+            appliedRows++;
+        }
+    });
+    return { appliedRows, matchedGroups: matchedGroups.size };
+}
+
+async function applyGraduateSurveyIndicatorsFromSheet(rows, rawUrl, allowedDegrees = null, sourceLabel = '') {
+    const csvUrl = resolveGraduateSurveyCsvUrl(rawUrl);
+    if (!csvUrl) return { applied: false, reason: 'no-url' };
+
+    const requestUrl = `${csvUrl}${csvUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    const csvText = await fetchTextIfExists(requestUrl);
+    if (!csvText) return { applied: false, reason: 'unreachable-sheet' };
+
+    const surveyRows = parseCSVQuotedObjects(csvText, ',');
+    if (!surveyRows.length) return { applied: false, reason: 'empty-sheet' };
+
+    const surveyAgg = aggregateGraduateSurveyRows(surveyRows);
+    if (!Object.keys(surveyAgg.metricsByKey).length) {
+        return { applied: false, reason: surveyAgg.reason || 'no-metrics', surveyRows: surveyRows.length };
+    }
+
+    const applyInfo = applyGraduateSurveyMetrics(rows, surveyAgg.metricsByKey, allowedDegrees, sourceLabel);
+    return {
+        applied: applyInfo.appliedRows > 0,
+        appliedRows: applyInfo.appliedRows,
+        groups: surveyAgg.groups,
+        matchedRows: surveyAgg.matchedRows,
+        reason: applyInfo.appliedRows > 0 ? '' : 'no-target-rows'
+    };
+}
+
+async function applyGraduateSurveyIndicators(rows) {
+    const hasSplitConfig = Boolean(
+        GRADUATES_SURVEY_BACHELOR_SHEET_URL || GRADUATES_SURVEY_POSTGRAD_SHEET_URL
+    );
+    const sources = hasSplitConfig ? [
+        {
+            url: GRADUATES_SURVEY_BACHELOR_SHEET_URL,
+            degrees: BACHELOR_DEGREES,
+            label: 'bachelor'
+        },
+        {
+            url: GRADUATES_SURVEY_POSTGRAD_SHEET_URL,
+            degrees: POSTGRAD_DEGREES,
+            label: 'postgrad'
+        }
+    ] : [
+        {
+            url: GRADUATES_SURVEY_SHEET_URL,
+            degrees: null,
+            label: 'all'
+        }
+    ];
+
+    const configuredSources = sources.filter(s => String(s.url || '').trim() !== '');
+    if (!configuredSources.length) return { applied: false, reason: 'no-url' };
+
+    let appliedRows = 0;
+    let groups = 0;
+    let matchedRows = 0;
+    let sourcesUsed = 0;
+    let failures = 0;
+
+    for (const source of configuredSources) {
+        const info = await applyGraduateSurveyIndicatorsFromSheet(rows, source.url, source.degrees, source.label);
+        if (info.applied) {
+            appliedRows += info.appliedRows || 0;
+            groups += info.groups || 0;
+            matchedRows += info.matchedRows || 0;
+            sourcesUsed++;
+        } else {
+            failures++;
+        }
+    }
+
+    if (!appliedRows) {
+        return { applied: false, reason: failures ? 'all-sources-failed' : 'no-metrics' };
+    }
+    return { applied: true, appliedRows, groups, matchedRows, sourcesUsed };
 }
 
 function parseCitationValue(value, citationsMap = null) {
@@ -688,11 +1092,22 @@ async function loadData() {
         const res = await fetch('data/data.csv?t=' + Date.now());
         const csv = await res.text();
         allRows = parseCSV(csv);
+        const surveyInfo = await applyGraduateSurveyIndicators(allRows);
         const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
         dot.className = 'dot ok';
         const parts = [`تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`];
+        if (surveyInfo.applied) {
+            const srcCount = surveyInfo.sourcesUsed || 1;
+            parts.push(`تحديث مؤشرات الخريجين من الشيت (${surveyInfo.appliedRows} سجل، ${srcCount} مصدر)`);
+        } else if (
+            GRADUATES_SURVEY_SHEET_URL ||
+            GRADUATES_SURVEY_BACHELOR_SHEET_URL ||
+            GRADUATES_SURVEY_POSTGRAD_SHEET_URL
+        ) {
+            parts.push('تعذر تحديث مؤشرات الخريجين من الشيت');
+        }
         if (researchInfo.applied) parts.push(`تحديث مؤشرات البحث من faculty-activities (${researchInfo.appliedRows} سجل)`);
         if (fteInfo.applied) parts.push(`احتساب هيئة التدريس من التدريس الفعلي (${fteInfo.programsWithComputedFTE} سجل)`);
         txt.textContent = parts.join(' | ');
