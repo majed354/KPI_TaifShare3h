@@ -24,20 +24,35 @@ const GRADUATE_PROGRAM_ALIASES = {
     'الدراسات القرانيه': 'الدراسات القرآنية',
     'الانظمة': 'الأنظمة',
 };
-const INDICATORS = [
-    { id:1,  name:"تقويم الطالب لجودة خبرات التعلم", unit:"درجة", key:"experience_eval", numeric:true },
-    { id:2,  name:"تقييم الطالب لجودة المقررات",     unit:"درجة", key:"course_eval",     numeric:true },
-    { id:3,  name:"معدّل التخرج بالوقت المحدد",      unit:"%",    key:"graduation_rate", numeric:true },
-    { id:4,  name:"معدّل استبقاء طلاب السنة الأولى",  unit:"%",    key:"retention_rate",  numeric:true },
-    { id:5,  name:"مستوى أداء الطالب",                unit:"%",    key:"student_performance", numeric:true },
-    { id:6,  name:"توظيف الخريجين أو التحاقهم بالدراسات العليا", unit:"%", key:"employment_rate", numeric:true },
-    { id:7,  name:"تقويم جهات التوظيف",               unit:"درجة", key:"employer_eval",   numeric:true },
-    { id:8,  name:"نسبة الطلاب/هيئة التدريس",         unit:"نسبة", key:"student_faculty_ratio" },
-    { id:9,  name:"نسبة النشر العلمي",                unit:"%",    key:"publication_pct", numeric:true },
-    { id:10, name:"البحوث/عضو هيئة تدريس",           unit:"بحث",  key:"research_per_faculty", numeric:true },
-    { id:11, name:"متوسط الاقتباسات لكل بحث",         unit:"اقتباس", key:"citations_per_faculty", numeric:true },
-    { id:12, name:"نسبة نشر طلاب الدراسات العليا",   unit:"%",    key:"student_publication", numeric:true, gradOnly:true },
-    { id:13, name:"براءات الاختراع",                  unit:"براءة", key:"patents", numeric:true, gradOnly:true },
+const INDICATORS_UG = [
+    { id:1,  code:'KPI-1',  name:"تقويم الطلاب لجودة خبرات التعلم في البرنامج", unit:"درجة", key:"experience_eval", numeric:true },
+    { id:2,  code:'KPI-2',  name:"تقييم الطلاب لجودة المقررات", unit:"درجة", key:"course_eval", numeric:true },
+    { id:3,  code:'KPI-3',  name:"معدّل التخرج بالوقت المحدد", unit:"%", key:"graduation_rate", numeric:true },
+    { id:4,  code:'KPI-4',  name:"معدّل استبقاء طلاب السنة الأولى", unit:"%", key:"retention_rate", numeric:true },
+    { id:5,  code:'KPI-5',  name:"مستوى أداء الطالب", unit:"%", key:"student_performance", numeric:true },
+    { id:6,  code:'KPI-6',  name:"توظيف الخريجين أو التحاقهم بالدراسات العليا", unit:"%", key:"employment_rate", numeric:true },
+    { id:7,  code:'KPI-7',  name:"تقويم جهات التوظيف لكفاءة خريجي البرنامج", unit:"درجة", key:"employer_eval", numeric:true },
+    { id:8,  code:'KPI-8',  name:"نسبة الطلاب إلى أعضاء هيئة التدريس", unit:"نسبة", key:"student_faculty_ratio" },
+    { id:9,  code:'KPI-9',  name:"النسبة المئوية للنشر العلمي لأعضاء هيئة التدريس", unit:"%", key:"publication_pct", numeric:true },
+    { id:10, code:'KPI-10', name:"معدل البحوث المنشورة لكل عضو هيئة تدريس", unit:"بحث", key:"research_per_faculty", numeric:true },
+    { id:11, code:'KPI-11', name:"معدل الاقتباسات في المجلات المحكمة لكل عضو هيئة تدريس", unit:"اقتباس", key:"citations_per_faculty", numeric:true },
+    { id:12, code:'KPI-12', name:"نسبة النشر العلمي للطلاب", unit:"%", key:"student_publication", numeric:true, gradOnly:true },
+    { id:13, code:'KPI-13', name:"عدد براءات الاختراع والابتكار وجوائز التميز", unit:"براءة", key:"patents", numeric:true, gradOnly:true },
+];
+const INDICATORS_PG = [
+    { id:1,  code:'KPI-PG-1',  name:"تقويم الطلاب لجودة خبرات التعلم في البرنامج", unit:"درجة", key:"experience_eval", numeric:true },
+    { id:2,  code:'KPI-PG-2',  name:"تقييم الطلاب لجودة المقررات", unit:"درجة", key:"course_eval", numeric:true },
+    { id:3,  code:'KPI-PG-3',  name:"تقييم الطلاب لجودة الإشراف العلمي", unit:"درجة", key:"supervision_eval", numeric:true },
+    { id:4,  code:'KPI-PG-4',  name:"متوسط المدة التي يتخرج فيها الطالب", unit:"سنة", key:"avg_time_to_graduate", numeric:true },
+    { id:5,  code:'KPI-PG-5',  name:"معدل تسرب الطلاب من البرنامج", unit:"%", key:"dropout_rate", numeric:true },
+    { id:6,  code:'KPI-PG-6',  name:"تقويم جهات التوظيف لكفاءة خريجي البرنامج", unit:"درجة", key:"employer_eval", numeric:true },
+    { id:7,  code:'KPI-PG-7',  name:"رضا الطلاب عن الخدمات المقدمة", unit:"درجة", key:"services_satisfaction", numeric:true },
+    { id:8,  code:'KPI-PG-8',  name:"نسبة الطلاب إلى أعضاء هيئة التدريس", unit:"نسبة", key:"student_faculty_ratio" },
+    { id:9,  code:'KPI-PG-9',  name:"النسبة المئوية للنشر العلمي لأعضاء هيئة التدريس", unit:"%", key:"publication_pct", numeric:true },
+    { id:10, code:'KPI-PG-10', name:"معدل البحوث المنشورة لكل عضو هيئة تدريس", unit:"بحث", key:"research_per_faculty", numeric:true },
+    { id:11, code:'KPI-PG-11', name:"معدل الاقتباسات في المجلات المحكمة لكل عضو هيئة تدريس", unit:"اقتباس", key:"citations_per_faculty", numeric:true },
+    { id:12, code:'KPI-PG-12', name:"نسبة النشر العلمي للطلاب", unit:"%", key:"student_publication", numeric:true },
+    { id:13, code:'KPI-PG-13', name:"عدد براءات الاختراع والابتكار وجوائز التميز", unit:"براءة", key:"patents", numeric:true },
 ];
 const BACHELOR_DEGREES = new Set(['بكالوريوس']);
 const POSTGRAD_DEGREES = new Set(['الماجستير', 'دكتوراه']);
@@ -220,7 +235,8 @@ function normalizeArabicText(str) {
 
 function normalizeSurveyProgramName(name) {
     const base = normalizeArabicText(name)
-        .replace(/^برنامج\s+/,'');
+        .replace(/^برنامج\s+/,'')
+        .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
 }
@@ -369,9 +385,23 @@ function detectGraduateSurveyColumns(headers) {
             ['سنه التخرج'],
             ['التخرج من البرنامج']
         ]),
+        courseEval: findHeaderByCandidates(headers, [
+            ['جودة المقررات'],
+            ['تقييم المقررات']
+        ]),
         experience: findHeaderByCandidates(headers, [
             ['تقييمك العام', 'جودة التعلم'],
             ['جودة خبرات التعلم']
+        ]),
+        supervision: findHeaderByCandidates(headers, [
+            ['جودة الإشراف'],
+            ['الاشراف', 'الرسالة'],
+            ['الإشراف العلمي']
+        ]),
+        services: findHeaderByCandidates(headers, [
+            ['رضاك', 'الخدمات المقدمة'],
+            ['رضا الطلاب', 'الخدمات'],
+            ['مستوى الخدمات']
         ]),
         status: findHeaderByCandidates(headers, [
             ['وضعك الحالي بعد التخرج'],
@@ -427,7 +457,10 @@ function aggregateGraduateSurveyRows(surveyRows) {
         if (!grouped[key]) {
             grouped[key] = {
                 responses: 0,
+                courseSum: 0, courseCount: 0,
                 experienceSum: 0, experienceCount: 0,
+                supervisionSum: 0, supervisionCount: 0,
+                servicesSum: 0, servicesCount: 0,
                 perfSum: 0, perfCount: 0,
                 employedCount: 0, employmentCount: 0,
                 employerEvalSum: 0, employerEvalCount: 0
@@ -437,10 +470,28 @@ function aggregateGraduateSurveyRows(surveyRows) {
         g.responses++;
         matchedRows++;
 
+        const courseEval = parseRangeOrSingleValue(row[columns.courseEval], 1, 5);
+        if (courseEval != null) {
+            g.courseSum += courseEval;
+            g.courseCount++;
+        }
+
         const experience = parseRangeOrSingleValue(row[columns.experience], 1, 5);
         if (experience != null) {
             g.experienceSum += experience;
             g.experienceCount++;
+        }
+
+        const supervisionEval = parseRangeOrSingleValue(row[columns.supervision], 1, 5);
+        if (supervisionEval != null) {
+            g.supervisionSum += supervisionEval;
+            g.supervisionCount++;
+        }
+
+        const servicesEval = parseRangeOrSingleValue(row[columns.services], 1, 5);
+        if (servicesEval != null) {
+            g.servicesSum += servicesEval;
+            g.servicesCount++;
         }
 
         const performance = parseRangeOrSingleValue(row[columns.performance], 0, 100);
@@ -465,8 +516,14 @@ function aggregateGraduateSurveyRows(surveyRows) {
     const metricsByKey = {};
     Object.entries(grouped).forEach(([key, g]) => {
         metricsByKey[key] = {
+            eval_courses: g.courseCount > 0
+                ? Math.round((g.courseSum / g.courseCount) * 100) / 100 : null,
             eval_experience: g.experienceCount > 0
                 ? Math.round((g.experienceSum / g.experienceCount) * 100) / 100 : null,
+            eval_supervision: g.supervisionCount > 0
+                ? Math.round((g.supervisionSum / g.supervisionCount) * 100) / 100 : null,
+            eval_services: g.servicesCount > 0
+                ? Math.round((g.servicesSum / g.servicesCount) * 100) / 100 : null,
             performance_rate: g.perfCount > 0
                 ? Math.round((g.perfSum / g.perfCount) * 10) / 10 : null,
             employment_rate: g.employmentCount > 0
@@ -503,8 +560,20 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
         if (!metrics) return;
 
         let touched = false;
+        if (metrics.eval_courses != null) {
+            row.eval_courses = metrics.eval_courses;
+            touched = true;
+        }
         if (metrics.eval_experience != null) {
             row.eval_experience = metrics.eval_experience;
+            touched = true;
+        }
+        if (metrics.eval_supervision != null) {
+            row.eval_supervision = metrics.eval_supervision;
+            touched = true;
+        }
+        if (metrics.eval_services != null) {
+            row.eval_services = metrics.eval_services;
             touched = true;
         }
         if (metrics.performance_rate != null) {
@@ -1146,8 +1215,8 @@ function parseCSV(text) {
         numFields.forEach(f => { row[f] = parseFloat(row[f]) || 0; });
 
         const optionalMetricFields = [
-            'eval_courses','eval_experience','eval_employers',
-            'performance_rate','employment_rate'
+            'eval_courses','eval_experience','eval_supervision','eval_services','eval_employers',
+            'performance_rate','employment_rate','avg_time_to_graduate'
         ];
         optionalMetricFields.forEach(f => {
             const raw = String(row[f] || '').trim();
@@ -1201,6 +1270,8 @@ function calcKPIs(d, degree) {
     const kpi = {};
     kpi.experience_eval = d.eval_experience ?? null;
     kpi.course_eval = d.eval_courses ?? null;
+    kpi.supervision_eval = d.eval_supervision ?? null;
+    kpi.services_satisfaction = d.eval_services ?? null;
     kpi.employer_eval = d.eval_employers ?? null;
     kpi.student_performance = d.performance_rate ?? null;
     kpi.employment_rate = d.employment_rate ?? null;
@@ -1212,6 +1283,11 @@ function calcKPIs(d, degree) {
     // معدل الاستبقاء
     kpi.retention_rate = pct(d.students_retained, d.prev_new_count);
     kpi.retention_detail = d.prev_new_count > 0 ? `${d.students_retained} من ${d.prev_new_count}` : null;
+
+    // مؤشرات خاصة بالدراسات العليا
+    kpi.avg_time_to_graduate = d.avg_time_to_graduate ?? null;
+    kpi.dropout_rate = kpi.retention_rate != null
+        ? Math.round((100 - kpi.retention_rate) * 10) / 10 : null;
 
     // نسبة الطلاب/هيئة التدريس
     const facultyBase = getFacultyBaseForRatio(d);
@@ -1247,6 +1323,7 @@ function fmtKPI(val, unit) {
     if (val == null) return { text: 'غير متوفر', cls: 'na' };
     if (unit === '%') return { text: val.toFixed(1) + '%', cls: '' };
     if (unit === 'درجة') return { text: parseFloat(val).toFixed(2), cls: '' };
+    if (unit === 'سنة') return { text: parseFloat(val).toFixed(2), cls: '' };
     return { text: String(val), cls: '' };
 }
 
@@ -1586,8 +1663,8 @@ function showProgramDetail() {
 
     // KPIs
     const kpi = calcKPIs(d, prog.degree);
-    document.getElementById('kpi-grid').innerHTML = INDICATORS
-        .filter(ind => !ind.gradOnly || ['الماجستير','دكتوراه'].includes(prog.degree))
+    const programIndicators = getIndicatorsForDegree(prog.degree);
+    document.getElementById('kpi-grid').innerHTML = programIndicators
         .map(ind => {
             const v = kpi[ind.key];
             const f = fmtKPI(v, ind.unit);
@@ -1599,7 +1676,7 @@ function showProgramDetail() {
                 detailHtml = `<div class="kpi-detail">(${kpi.retention_detail})</div>`;
             }
             return `<div class="kpi-card">
-                <div class="kpi-num">${ind.id}</div>
+                <div class="kpi-num">${ind.code || ind.id}</div>
                 <div class="kpi-body">
                     <div class="kpi-name">${ind.name}</div>
                     <div class="kpi-val ${f.cls}">${f.text} <span class="kpi-unit">${v != null ? ind.unit : ''}</span></div>
@@ -1741,13 +1818,23 @@ function isGradDegree(deg) {
     return ['الماجستير','دكتوراه'].includes(String(deg || '').trim());
 }
 
+function getIndicatorsForDegree(degree) {
+    if (isGradDegree(degree)) return INDICATORS_PG;
+    return INDICATORS_UG.filter(ind => !ind.gradOnly);
+}
+
+function getIndicatorLabel(indicator) {
+    const code = String(indicator.code || '').trim();
+    return code ? `${code} - ${indicator.name}` : indicator.name;
+}
+
 function compareShortLabel(entry) {
     return `${entry.program.name} - ${fmtYear(entry.year)}`;
 }
 
 function buildComparisonModel(entries) {
-    const showGradIndicators = entries.some(e => isGradDegree(e.program.degree));
-    const indicators = INDICATORS.filter(ind => !ind.gradOnly || showGradIndicators);
+    const allGrad = entries.length > 0 && entries.every(e => isGradDegree(e.program.degree));
+    const indicators = allGrad ? INDICATORS_PG : INDICATORS_UG.filter(ind => !ind.gradOnly);
     const header = [
         'المؤشر',
         ...entries.map(e => e.label),
@@ -1798,14 +1885,15 @@ function showComparison() {
     document.getElementById('cmp-tbody').innerHTML = model.rows.map(row => {
         const valueCells = row.formattedValues.map(v => `<td>${v}</td>`).join('');
         const diffCells = row.diffs.map(d => `<td>${formatDiffCell(d)}</td>`).join('');
-        return `<tr><td>${row.indicator.name}</td>${valueCells}${diffCells}</tr>`;
+        return `<tr><td>${getIndicatorLabel(row.indicator)}</td>${valueCells}${diffCells}</tr>`;
     }).join('');
 
     const chartLabels = [];
     const chartData = entries.map(() => []);
     model.rows.forEach(row => {
         if (!row.indicator.numeric) return;
-        chartLabels.push(row.indicator.name.length > 22 ? `${row.indicator.name.slice(0,22)}...` : row.indicator.name);
+        const chartLabel = row.indicator.code || row.indicator.name;
+        chartLabels.push(chartLabel.length > 26 ? `${chartLabel.slice(0,26)}...` : chartLabel);
         row.rawValues.forEach((val, idx) => {
             chartData[idx].push(val == null ? null : parseFloat(val));
         });
@@ -1917,11 +2005,10 @@ async function exportSectionAsPDF(elementId, filename) {
 function getProgramIndicatorRows() {
     if (!currentProg || currentProg.cmp) return [];
     const kpi = calcKPIs(currentProg.data, currentProg.prog.degree);
-    return INDICATORS
-        .filter(ind => !ind.gradOnly || isGradDegree(currentProg.prog.degree))
+    return getIndicatorsForDegree(currentProg.prog.degree)
         .map(ind => {
             const f = fmtKPI(kpi[ind.key], ind.unit);
-            return [ind.name, f.text, ind.unit];
+            return [getIndicatorLabel(ind), f.text, ind.unit];
         });
 }
 
@@ -1963,7 +2050,7 @@ function exportCSV() {
 function getCompareExportRows() {
     if (!currentProg || !currentProg.cmp || !currentProg.model) return [];
     return currentProg.model.rows.map(row => [
-        row.indicator.name,
+        getIndicatorLabel(row.indicator),
         ...row.formattedValues,
         ...row.diffs.map(formatDiffText)
     ]);
