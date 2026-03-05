@@ -296,6 +296,104 @@ function parseCSVQuotedObjects(text, separator = ',') {
     return rows;
 }
 
+function parseAcademicYear(value) {
+    const raw = normalizeArabicText(value);
+    if (!raw) return null;
+    const nums = raw.match(/\d+/g);
+    if (!nums || !nums.length) return null;
+    const n = parseInt(nums[nums.length - 1], 10);
+    if (!Number.isFinite(n)) return null;
+    return n >= 1400 ? (n % 100) : n;
+}
+
+function parseDaySerial(value) {
+    const raw = normalizeArabicText(value);
+    if (!raw) return null;
+
+    // YYYY-MM-DD
+    const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) {
+        const y = parseInt(iso[1], 10);
+        const m = parseInt(iso[2], 10) - 1;
+        const d = parseInt(iso[3], 10);
+        const ms = Date.UTC(y, m, d);
+        return Number.isFinite(ms) ? (ms / 86400000) : null;
+    }
+
+    // Excel serial date
+    if (/^\d+(?:\.\d+)?$/.test(raw)) {
+        const serial = parseFloat(raw);
+        if (Number.isFinite(serial) && serial >= 20000 && serial <= 70000) {
+            return Math.floor(serial) - 25569;
+        }
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return Math.floor(parsed.getTime() / 86400000);
+}
+
+async function applyAverageGraduationDurationFromDetails(rows) {
+    const csvText = await fetchTextIfExists(`data/graduates_detail.csv?t=${Date.now()}`);
+    if (!csvText) return { applied: false, reason: 'missing-graduates-detail' };
+
+    const gradRows = parseCSVQuotedObjects(csvText, ';');
+    if (!gradRows.length) return { applied: false, reason: 'empty-graduates-detail' };
+
+    const aggregates = {}; // year|program|degree -> {sumYears, count}
+    let validRecords = 0;
+
+    gradRows.forEach(g => {
+        const degree = normalizeDegree(g['الدرجة'] || g['Degree_aName'] || g['degree']);
+        if (!isGradDegree(degree)) return;
+
+        const year = parseAcademicYear(g['السنة'] || g['Semester'] || g['year']);
+        const program = normalizeSurveyProgramName(g['التخصص'] || g['Major_aName'] || g['program']);
+        if (!year || !program) return;
+
+        const admissionDay = parseDaySerial(g['تاريخ_القبول'] || g['admission_date'] || g['AdmissionDate']);
+        const graduateDay = parseDaySerial(g['تاريخ_التخرج'] || g['grad_date'] || g['GraduationDate']);
+        if (admissionDay == null || graduateDay == null || graduateDay < admissionDay) return;
+
+        const years = (graduateDay - admissionDay) / 365.25;
+        if (!Number.isFinite(years) || years < 0.5 || years > 10) return;
+
+        const key = `${year}|${program}|${degree}`;
+        if (!aggregates[key]) aggregates[key] = { sumYears: 0, count: 0 };
+        aggregates[key].sumYears += years;
+        aggregates[key].count++;
+        validRecords++;
+    });
+
+    if (!validRecords) return { applied: false, reason: 'no-valid-duration-records' };
+
+    let appliedRows = 0;
+    const matchedGroups = new Set();
+    rows.forEach(r => {
+        const degree = normalizeDegree(r.Degree_aName);
+        if (!isGradDegree(degree)) return;
+
+        const year = parseInt(r.Semester, 10);
+        const program = normalizeSurveyProgramName(r.Major_aName);
+        const key = `${year}|${program}|${degree}`;
+        const agg = aggregates[key];
+        if (!agg || agg.count <= 0) return;
+
+        r.avg_time_to_graduate = Math.round((agg.sumYears / agg.count) * 100) / 100;
+        r.avg_time_to_graduate_count = agg.count;
+        r.avg_time_source = 'graduates_detail';
+        matchedGroups.add(key);
+        appliedRows++;
+    });
+
+    return {
+        applied: appliedRows > 0,
+        appliedRows,
+        matchedGroups: matchedGroups.size,
+        validRecords
+    };
+}
+
 function extractNumericValues(value) {
     if (value == null) return [];
     const normalized = normalizeArabicText(value)
@@ -1164,12 +1262,16 @@ async function loadData() {
         const res = await fetch('data/data.csv?t=' + Date.now());
         const csv = await res.text();
         allRows = parseCSV(csv);
+        const durationInfo = await applyAverageGraduationDurationFromDetails(allRows);
         const surveyInfo = await applyGraduateSurveyIndicators(allRows);
         const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
         dot.className = 'dot ok';
         const parts = [`تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`];
+        if (durationInfo.applied) {
+            parts.push(`احتساب متوسط مدة التخرج من سجل الخريجين (${durationInfo.appliedRows} سجل)`);
+        }
         if (surveyInfo.applied) {
             const srcCount = surveyInfo.sourcesUsed || 1;
             parts.push(`تحديث مؤشرات الخريجين من الشيت (${surveyInfo.appliedRows} سجل، ${srcCount} مصدر)`);
@@ -1674,6 +1776,8 @@ function showProgramDetail() {
                 detailHtml = `<div class="kpi-detail">(${kpi.graduation_detail})</div>`;
             } else if (ind.key === 'retention_rate' && kpi.retention_detail) {
                 detailHtml = `<div class="kpi-detail">(${kpi.retention_detail})</div>`;
+            } else if (ind.key === 'avg_time_to_graduate' && (d.avg_time_to_graduate_count || 0) > 0) {
+                detailHtml = `<div class="kpi-detail">(من ${fmtNum(d.avg_time_to_graduate_count)} خريج)</div>`;
             }
             return `<div class="kpi-card">
                 <div class="kpi-num">${ind.code || ind.id}</div>
