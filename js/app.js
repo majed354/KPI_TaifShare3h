@@ -631,18 +631,25 @@ function aggregateGraduateSurveyRows(surveyRows) {
         metricsByKey[key] = {
             eval_courses: g.courseCount > 0
                 ? Math.round((g.courseSum / g.courseCount) * 100) / 100 : null,
+            eval_courses_sample: g.courseCount,
             eval_experience: g.experienceCount > 0
                 ? Math.round((g.experienceSum / g.experienceCount) * 100) / 100 : null,
+            eval_experience_sample: g.experienceCount,
             eval_supervision: g.supervisionCount > 0
                 ? Math.round((g.supervisionSum / g.supervisionCount) * 100) / 100 : null,
+            eval_supervision_sample: g.supervisionCount,
             eval_services: g.servicesCount > 0
                 ? Math.round((g.servicesSum / g.servicesCount) * 100) / 100 : null,
+            eval_services_sample: g.servicesCount,
             performance_rate: g.perfCount > 0
                 ? Math.round((g.perfSum / g.perfCount) * 10) / 10 : null,
+            performance_rate_sample: g.perfCount,
             employment_rate: g.employmentCount > 0
                 ? pct(g.employedCount, g.employmentCount) : null,
+            employment_rate_sample: g.employmentCount,
             eval_employers: g.employerEvalCount > 0
                 ? Math.round((g.employerEvalSum / g.employerEvalCount) * 100) / 100 : null,
+            eval_employers_sample: g.employerEvalCount,
         };
     });
 
@@ -697,30 +704,37 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
         let touched = false;
         if (metrics.eval_courses != null) {
             row.eval_courses = metrics.eval_courses;
+            row.eval_courses_sample = metrics.eval_courses_sample || 0;
             touched = true;
         }
         if (metrics.eval_experience != null) {
             row.eval_experience = metrics.eval_experience;
+            row.eval_experience_sample = metrics.eval_experience_sample || 0;
             touched = true;
         }
         if (metrics.eval_supervision != null) {
             row.eval_supervision = metrics.eval_supervision;
+            row.eval_supervision_sample = metrics.eval_supervision_sample || 0;
             touched = true;
         }
         if (metrics.eval_services != null) {
             row.eval_services = metrics.eval_services;
+            row.eval_services_sample = metrics.eval_services_sample || 0;
             touched = true;
         }
         if (metrics.performance_rate != null) {
             row.performance_rate = metrics.performance_rate;
+            row.performance_rate_sample = metrics.performance_rate_sample || 0;
             touched = true;
         }
         if (metrics.employment_rate != null) {
             row.employment_rate = metrics.employment_rate;
+            row.employment_rate_sample = metrics.employment_rate_sample || 0;
             touched = true;
         }
         if (metrics.eval_employers != null) {
             row.eval_employers = metrics.eval_employers;
+            row.eval_employers_sample = metrics.eval_employers_sample || 0;
             touched = true;
         }
         if (touched) {
@@ -1467,6 +1481,22 @@ function fmtKPI(val, unit) {
     return { text: String(val), cls: '' };
 }
 
+function getSurveySampleCount(d, indicatorKey) {
+    const keyMap = {
+        experience_eval: 'eval_experience_sample',
+        course_eval: 'eval_courses_sample',
+        supervision_eval: 'eval_supervision_sample',
+        services_satisfaction: 'eval_services_sample',
+        student_performance: 'performance_rate_sample',
+        employment_rate: 'employment_rate_sample',
+        employer_eval: 'eval_employers_sample',
+    };
+    const sampleKey = keyMap[indicatorKey];
+    if (!sampleKey) return 0;
+    const count = Number(d[sampleKey]);
+    return Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+}
+
 // ========================================
 // لوحة المعلومات
 // ========================================
@@ -1816,6 +1846,10 @@ function showProgramDetail() {
                 detailHtml = `<div class="kpi-detail">(${kpi.retention_detail})</div>`;
             } else if (ind.key === 'avg_time_to_graduate' && (d.avg_time_to_graduate_count || 0) > 0) {
                 detailHtml = `<div class="kpi-detail">(من ${fmtNum(d.avg_time_to_graduate_count)} خريج)</div>`;
+            }
+            const sampleCount = getSurveySampleCount(d, ind.key);
+            if (sampleCount > 0) {
+                detailHtml += `<div class="kpi-detail kpi-sample">(العينة ${fmtNum(sampleCount)} طلاب)</div>`;
             }
             return `<div class="kpi-card">
                 <div class="kpi-num">${ind.code || ind.id}</div>
