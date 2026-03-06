@@ -19,8 +19,8 @@ const GRADUATES_SURVEY_POSTGRAD_SHEET_URL = String(KPI_CONFIG.graduatesSurveyPos
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
 const RESEARCH_KPI_EXCLUDED_RANKS = new Set(['معيد', 'محاضر', 'متعاون', 'مدرس']);
 const GRADUATE_PROGRAM_ALIASES = {
-    'القران وعلومه': 'القراءات',
-    'القرآن وعلومه': 'القراءات',
+    // توحيد الاختلافات الإملائية فقط دون دمج برامج مختلفة.
+    'القران وعلومه': 'القرآن وعلومه',
     'الدراسات القرانيه': 'الدراسات القرآنية',
     'الانظمة': 'الأنظمة',
 };
