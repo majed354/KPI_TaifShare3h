@@ -648,13 +648,33 @@ function isDegreeAllowed(row, allowedDegrees) {
 function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, sourceLabel = '') {
     let appliedRows = 0;
     const matchedGroups = new Set();
+    const deptDegreeProgramCounts = {};
+
+    rows.forEach(row => {
+        if (!isDegreeAllowed(row, allowedDegrees)) return;
+        const year = parseInt(row.Semester, 10);
+        const degree = normalizeDegree(row.Degree_aName);
+        const dept = normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName));
+        if (!year || !degree || !dept) return;
+        const key = `${year}|${dept}|${degree}`;
+        deptDegreeProgramCounts[key] = (deptDegreeProgramCounts[key] || 0) + 1;
+    });
+
     rows.forEach(row => {
         if (!isDegreeAllowed(row, allowedDegrees)) return;
 
         const year = parseInt(row.Semester, 10);
+        const degree = normalizeDegree(row.Degree_aName);
         const majorKey = `${year}|${normalizeSurveyProgramName(row.Major_aName)}`;
-        const deptKey = `${year}|${normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName))}`;
-        const metrics = metricsByKey[majorKey] || metricsByKey[deptKey];
+        const normalizedDept = normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName));
+        const deptKey = `${year}|${normalizedDept}`;
+        const deptDegreeKey = `${year}|${normalizedDept}|${degree}`;
+
+        const hasProgramMetrics = Boolean(metricsByKey[majorKey]);
+        const canUseDeptFallback = !hasProgramMetrics
+            && Boolean(metricsByKey[deptKey])
+            && deptDegreeProgramCounts[deptDegreeKey] === 1;
+        const metrics = hasProgramMetrics ? metricsByKey[majorKey] : (canUseDeptFallback ? metricsByKey[deptKey] : null);
         if (!metrics) return;
 
         let touched = false;
@@ -687,9 +707,10 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
             touched = true;
         }
         if (touched) {
-            const baseSource = metricsByKey[majorKey] ? 'graduates_survey_program' : 'graduates_survey_dept';
+            const usedProgramMetrics = hasProgramMetrics;
+            const baseSource = usedProgramMetrics ? 'graduates_survey_program' : 'graduates_survey_dept';
             row.survey_source = sourceLabel ? `${baseSource}_${sourceLabel}` : baseSource;
-            matchedGroups.add(metricsByKey[majorKey] ? majorKey : deptKey);
+            matchedGroups.add(usedProgramMetrics ? majorKey : deptKey);
             appliedRows++;
         }
     });
