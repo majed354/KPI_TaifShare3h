@@ -56,6 +56,15 @@ const INDICATORS_PG = [
 ];
 const BACHELOR_DEGREES = new Set(['بكالوريوس']);
 const POSTGRAD_DEGREES = new Set(['الماجستير', 'دكتوراه']);
+const SURVEY_DEPT_FALLBACK_RULES = {
+    // قواعد الأعمال المعتمدة:
+    // - الشريعة والقراءات: تعدد برامج داخل نفس الدرجة => منع التعويض على مستوى القسم.
+    // - الأنظمة والدراسات الإسلامية (الثقافة الإسلامية): برنامج واحد لكل درجة => يسمح بالتعويض عند غياب اسم البرنامج.
+    'الشريعة': 'disabled',
+    'القراءات': 'disabled',
+    'الأنظمة': 'single_program_per_degree',
+    'الدراسات الإسلامية': 'single_program_per_degree',
+};
 
 // ========================================
 // البيانات
@@ -139,6 +148,12 @@ function normalizeDegree(degree) {
     if (d === 'الماجستير' || d === 'ماجستير') return 'الماجستير';
     if (d === 'الدكتوراه' || d === 'دكتوراه') return 'دكتوراه';
     return d;
+}
+
+function isDeptSurveyFallbackAllowed(dept) {
+    const normalizedDept = normalizeDepartment(dept);
+    const rule = SURVEY_DEPT_FALLBACK_RULES[normalizedDept] || 'disabled';
+    return rule === 'single_program_per_degree';
 }
 
 function normalizeRank(rank) {
@@ -671,7 +686,9 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
         const deptDegreeKey = `${year}|${normalizedDept}|${degree}`;
 
         const hasProgramMetrics = Boolean(metricsByKey[majorKey]);
+        const deptFallbackEnabled = isDeptSurveyFallbackAllowed(normalizedDept);
         const canUseDeptFallback = !hasProgramMetrics
+            && deptFallbackEnabled
             && Boolean(metricsByKey[deptKey])
             && deptDegreeProgramCounts[deptDegreeKey] === 1;
         const metrics = hasProgramMetrics ? metricsByKey[majorKey] : (canUseDeptFallback ? metricsByKey[deptKey] : null);
