@@ -76,6 +76,9 @@ let currentProg = null;// for export
 let compareThirdEnabled = false;
 let gradData = [];     // graduate records
 let ncData = [];       // non-completer records
+let appBootstrapped = false;
+let appBootPromise = null;
+let loginMembersById = null;
 
 const SUPPORTED_KPI_DEGREES = new Set(['بكالوريوس','الماجستير','دكتوراه']);
 const RANK_ALLOWED_DEGREES = {
@@ -221,6 +224,172 @@ async function fetchJSONIfExists(url) {
     }
 }
 
+function setBodyBlocked(blocked) {
+    document.body.classList.toggle('app-blocked', Boolean(blocked));
+}
+
+function updateLoadingMessage(message) {
+    const label = document.getElementById('loadingMessage');
+    if (label) label.textContent = message;
+}
+
+function showLoadingOverlay(message = 'جاري تحميل مؤشرات الأداء...') {
+    const overlay = document.getElementById('initialLoadingOverlay');
+    updateLoadingMessage(message);
+    if (overlay) overlay.classList.add('active');
+    setBodyBlocked(true);
+}
+
+function hideLoadingOverlay() {
+    const overlay = document.getElementById('initialLoadingOverlay');
+    if (overlay) overlay.classList.remove('active');
+    const loginVisible = !document.getElementById('loginOverlay')?.classList.contains('hidden');
+    setBodyBlocked(loginVisible);
+}
+
+function setLoginError(message = '') {
+    const error = document.getElementById('loginErrorMsg');
+    if (error) error.textContent = message;
+}
+
+function showMainApp(memberName) {
+    document.getElementById('loginOverlay')?.classList.add('hidden');
+    document.getElementById('mainApp')?.classList.remove('hidden');
+
+    const welcomeBadge = document.getElementById('welcomeBadge');
+    const welcomeText = document.getElementById('welcomeText');
+    if (welcomeBadge && welcomeText) {
+        welcomeText.textContent = `مرحباً، ${memberName || 'مستخدم'}`;
+        welcomeBadge.classList.remove('hidden');
+    }
+    setBodyBlocked(false);
+}
+
+function showLoginOverlay() {
+    document.getElementById('mainApp')?.classList.add('hidden');
+    document.getElementById('loginOverlay')?.classList.remove('hidden');
+    document.getElementById('welcomeBadge')?.classList.add('hidden');
+    hideLoadingOverlay();
+    setBodyBlocked(true);
+}
+
+async function loadLoginMembersById() {
+    if (loginMembersById) return loginMembersById;
+
+    const csvText = await fetchTextIfExists(`data/faculty.csv?t=${Date.now()}`);
+    if (!csvText) throw new Error('missing-login-members');
+
+    const facultyRows = parseFlatCSV(csvText, ',');
+    const byId = {};
+    facultyRows.forEach(row => {
+        const id = normalizeLoginDigits(pickCell(row, ['id', 'ID']));
+        const name = pickCell(row, ['name', 'Name']);
+        const year = parseInt(pickCell(row, ['year', 'Year']), 10) || 0;
+        const active = pickCell(row, ['active', 'Active']) === 'نعم';
+        if (!id || !name) return;
+
+        const score = (active ? 100000 : 0) + year;
+        if (!byId[id] || score > byId[id].score) {
+            byId[id] = { name, score };
+        }
+    });
+
+    loginMembersById = byId;
+    return byId;
+}
+
+async function startApp() {
+    if (appBootstrapped) return true;
+    if (appBootPromise) return appBootPromise;
+
+    appBootPromise = (async () => {
+        showLoadingOverlay('جاري تحميل مؤشرات الأداء...');
+
+        const ok = await loadData();
+        if (!ok) return false;
+
+        initDashboard();
+        initProgramView();
+        initCompare();
+
+        updateLoadingMessage('جاري تحميل السجلات التفصيلية...');
+        await Promise.all([loadGraduates(), loadNonCompleters()]);
+        initGraduatesView();
+        initNonCompleteView();
+
+        appBootstrapped = true;
+        return true;
+    })();
+
+    try {
+        const ok = await appBootPromise;
+        if (!ok) alert('تعذر تحميل بيانات الموقع.');
+        return ok;
+    } finally {
+        appBootPromise = null;
+        hideLoadingOverlay();
+    }
+}
+
+async function handleLogin() {
+    const employeeInput = document.getElementById('loginEmployeeId');
+    const passwordInput = document.getElementById('loginPassword');
+    const loginBtn = document.getElementById('loginBtn');
+    const employeeId = normalizeLoginDigits(employeeInput?.value || '');
+    const password = normalizeLoginDigits(passwordInput?.value || '');
+
+    setLoginError('');
+    if (!employeeId) {
+        setLoginError('يرجى إدخال رقم المنسوب');
+        employeeInput?.focus();
+        return;
+    }
+    if (password !== '1429') {
+        setLoginError('كلمة المرور غير صحيحة');
+        passwordInput?.focus();
+        passwordInput?.select();
+        return;
+    }
+
+    if (loginBtn) loginBtn.disabled = true;
+    try {
+        const membersById = await loadLoginMembersById();
+        const member = membersById[employeeId];
+        if (!member) {
+            setLoginError('رقم المنسوب غير موجود في السجلات');
+            employeeInput?.focus();
+            employeeInput?.select();
+            return;
+        }
+
+        sessionStorage.setItem('loggedIn', 'true');
+        sessionStorage.setItem('employeeId', employeeId);
+        sessionStorage.setItem('employeeName', member.name);
+
+        showMainApp(member.name);
+        await startApp();
+    } catch (error) {
+        console.error(error);
+        setLoginError('تعذر التحقق من بيانات الدخول');
+    } finally {
+        if (loginBtn) loginBtn.disabled = false;
+    }
+}
+
+function handleLogout() {
+    sessionStorage.removeItem('loggedIn');
+    sessionStorage.removeItem('employeeId');
+    sessionStorage.removeItem('employeeName');
+
+    const employeeInput = document.getElementById('loginEmployeeId');
+    const passwordInput = document.getElementById('loginPassword');
+    if (employeeInput) employeeInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+
+    setLoginError('');
+    showLoginOverlay();
+}
+
 function buildWeights(programKeys, studentsByProgramKey) {
     const uniqueKeys = [...new Set(programKeys)];
     if (uniqueKeys.length === 0) return [];
@@ -246,6 +415,17 @@ function normalizeArabicText(str) {
         .replace(/[\u200E\u200F]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+function normalizeLoginDigits(value) {
+    if (value == null) return '';
+    const map = {
+        '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4',
+        '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+        '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4',
+        '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9'
+    };
+    return String(value).replace(/[٠-٩۰-۹]/g, ch => map[ch] || ch).trim();
 }
 
 function normalizeSurveyProgramName(name) {
@@ -1308,8 +1488,6 @@ async function applyTeachingBasedFacultyFTE(rows) {
 // تحميل وتحليل البيانات
 // ========================================
 async function loadData() {
-    const dot = document.getElementById('status-dot');
-    const txt = document.getElementById('status-text');
     try {
         const res = await fetch('data/data.csv?t=' + Date.now());
         const csv = await res.text();
@@ -1319,29 +1497,17 @@ async function loadData() {
         const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
-        dot.className = 'dot ok';
-        const parts = [`تم تحميل ${programs.length} برنامج - ${allRows.length} سجل`];
-        if (durationInfo.applied) {
-            parts.push(`احتساب متوسط مدة التخرج من سجل الخريجين (${durationInfo.appliedRows} سجل)`);
-        }
-        if (surveyInfo.applied) {
-            const srcCount = surveyInfo.sourcesUsed || 1;
-            parts.push(`تحديث مؤشرات الخريجين من الشيت (${surveyInfo.appliedRows} سجل، ${srcCount} مصدر)`);
-        } else if (
-            GRADUATES_SURVEY_SHEET_URL ||
-            GRADUATES_SURVEY_BACHELOR_SHEET_URL ||
-            GRADUATES_SURVEY_POSTGRAD_SHEET_URL
-        ) {
-            parts.push('تعذر تحديث مؤشرات الخريجين من الشيت');
-        }
-        if (researchInfo.applied) parts.push(`تحديث مؤشرات البحث من faculty-activities (${researchInfo.appliedRows} سجل)`);
-        if (fteInfo.applied) parts.push(`احتساب هيئة التدريس من التدريس الفعلي (${fteInfo.programsWithComputedFTE} سجل)`);
-        txt.textContent = parts.join(' | ');
+        console.info('KPI data loaded', {
+            programs: programs.length,
+            rows: allRows.length,
+            durationInfo,
+            surveyInfo,
+            researchInfo,
+            fteInfo,
+        });
         return true;
     } catch (e) {
         console.error(e);
-        dot.className = 'dot err';
-        txt.textContent = 'خطأ في تحميل البيانات';
         return false;
     }
 }
@@ -2553,17 +2719,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         btn.addEventListener('click', () => switchView(btn.dataset.view));
     });
 
-    // Load data
-    const ok = await loadData();
-    if (!ok) return;
+    document.getElementById('loginBtn')?.addEventListener('click', handleLogin);
+    document.getElementById('logoutBtn')?.addEventListener('click', handleLogout);
+    document.getElementById('loginPassword')?.addEventListener('keypress', e => {
+        if (e.key === 'Enter') handleLogin();
+    });
+    document.getElementById('loginEmployeeId')?.addEventListener('keypress', e => {
+        if (e.key === 'Enter') document.getElementById('loginPassword')?.focus();
+    });
 
-    // Init views
-    initDashboard();
-    initProgramView();
-    initCompare();
-
-    // Load detail records
-    await Promise.all([loadGraduates(), loadNonCompleters()]);
-    initGraduatesView();
-    initNonCompleteView();
+    if (sessionStorage.getItem('loggedIn') === 'true') {
+        showMainApp(sessionStorage.getItem('employeeName') || '');
+        await startApp();
+    } else {
+        showLoginOverlay();
+    }
 });

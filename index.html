@@ -15,6 +15,40 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+<div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+        <div class="login-mark">
+            <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+                <circle cx="24" cy="24" r="21" stroke="currentColor" stroke-width="2"></circle>
+                <path d="M24 10v28M12 18h24M12 30h24" stroke="currentColor" stroke-width="2"></path>
+                <circle cx="24" cy="24" r="6" fill="currentColor"></circle>
+            </svg>
+        </div>
+        <h2 class="login-title">مؤشرات الأداء</h2>
+        <p class="login-subtitle">الدخول برقم المنسوب وكلمة المرور الموحدة</p>
+        <div class="login-form">
+            <div class="login-field">
+                <label for="loginEmployeeId">رقم المنسوب</label>
+                <input type="text" id="loginEmployeeId" placeholder="أدخل رقم المنسوب" autocomplete="off">
+            </div>
+            <div class="login-field">
+                <label for="loginPassword">كلمة المرور</label>
+                <input type="password" id="loginPassword" placeholder="أدخل كلمة المرور">
+            </div>
+            <button id="loginBtn" class="login-btn" type="button">دخول</button>
+            <p id="loginErrorMsg" class="login-error"></p>
+        </div>
+    </div>
+</div>
+
+<div id="initialLoadingOverlay" class="loading-overlay" aria-live="polite" aria-busy="true">
+    <div class="loading-card">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <p id="loadingMessage">جاري تحميل مؤشرات الأداء...</p>
+    </div>
+</div>
+
+<div id="mainApp" class="hidden">
 
 <header class="header">
     <div class="header-inner">
@@ -26,6 +60,10 @@
                 <h1>مؤشرات الأداء</h1>
                 <p>كلية الشريعة والأنظمة - جامعة الطائف</p>
             </div>
+        </div>
+        <div id="welcomeBadge" class="auth-badge hidden">
+            <span id="welcomeText" class="auth-text"></span>
+            <button id="logoutBtn" class="logout-btn" type="button">خروج</button>
         </div>
         <nav class="nav-tabs">
             <button class="nav-btn active" data-view="dashboard">لوحة المعلومات</button>
@@ -356,14 +394,11 @@
 
 </main>
 
-<div class="status-bar">
-    <span class="dot" id="status-dot"></span>
-    <span id="status-text">جاري التحميل...</span>
-</div>
-
 <footer class="footer">
     <p>&copy; كلية الشريعة والأنظمة - جامعة الطائف</p>
 </footer>
+
+</div>
 
 <script>
 window.KPI_CONFIG = {

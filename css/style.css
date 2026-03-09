@@ -35,6 +35,155 @@ body {
     display: flex;
     flex-direction: column;
 }
+body.app-blocked { overflow: hidden; }
+
+/* ============================
+   الدخول والتحميل الأولي
+   ============================ */
+.login-overlay,
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.login-overlay {
+    z-index: 3000;
+    background:
+        radial-gradient(circle at top right, rgba(201,162,39,0.18), transparent 22%),
+        radial-gradient(circle at bottom left, rgba(13,110,110,0.14), transparent 28%),
+        linear-gradient(135deg, #f4f7fb 0%, #eef3f8 100%);
+}
+.login-box {
+    width: min(100%, 420px);
+    background: rgba(255,255,255,0.96);
+    border: 1px solid rgba(13,110,110,0.12);
+    border-radius: 22px;
+    box-shadow: 0 20px 70px rgba(15, 23, 42, 0.15);
+    padding: 30px 28px 24px;
+}
+.login-mark {
+    width: 72px;
+    height: 72px;
+    border-radius: 20px;
+    margin: 0 auto 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+    color: var(--accent);
+    box-shadow: 0 12px 30px rgba(13,110,110,0.22);
+}
+.login-mark svg {
+    width: 44px;
+    height: 44px;
+}
+.login-title {
+    text-align: center;
+    font-size: 1.5rem;
+    color: var(--primary-dark);
+    margin-bottom: 4px;
+}
+.login-subtitle {
+    text-align: center;
+    color: var(--text-light);
+    font-size: 0.9rem;
+    margin-bottom: 18px;
+}
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.login-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.login-field label {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.login-field input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    font-family: var(--font);
+    font-size: 0.95rem;
+    background: #fff;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.login-field input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(13,110,110,0.1);
+}
+.login-btn {
+    margin-top: 4px;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 16px;
+    background: linear-gradient(135deg, var(--primary-dark), var(--primary));
+    color: #fff;
+    font-family: var(--font);
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.2s;
+}
+.login-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px rgba(13,110,110,0.2);
+}
+.login-btn:disabled {
+    opacity: 0.65;
+    cursor: wait;
+    transform: none;
+    box-shadow: none;
+}
+.login-error {
+    min-height: 20px;
+    color: var(--danger);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+.loading-overlay {
+    z-index: 2800;
+    background: rgba(243,245,249,0.88);
+    backdrop-filter: blur(3px);
+    display: none;
+}
+.loading-overlay.active { display: flex; }
+.loading-card {
+    min-width: min(100%, 280px);
+    padding: 24px 26px;
+    background: rgba(255,255,255,0.96);
+    border-radius: 18px;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+    text-align: center;
+    border: 1px solid rgba(13,110,110,0.1);
+}
+.loading-spinner {
+    width: 46px;
+    height: 46px;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    border: 4px solid rgba(13,110,110,0.14);
+    border-top-color: var(--primary);
+    animation: spin 0.9s linear infinite;
+}
+.loading-card p {
+    color: var(--primary-dark);
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
 
 /* ============================
    الهيدر
@@ -79,6 +228,34 @@ body {
     opacity: 0.8;
     font-weight: 300;
 }
+.auth-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px 7px 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: #fff;
+    white-space: nowrap;
+}
+.auth-text {
+    font-size: 0.84rem;
+    font-weight: 700;
+}
+.logout-btn {
+    border: none;
+    border-radius: 999px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.18);
+    color: #fff;
+    font-family: var(--font);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.logout-btn:hover { background: rgba(255,255,255,0.28); }
 .nav-tabs {
     display: flex;
     gap: 4px;
@@ -520,38 +697,11 @@ body {
 .diff-same { color: var(--text-light); }
 
 /* ============================
-   شريط الحالة
-   ============================ */
-.status-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--card);
-    border-top: 1px solid var(--border);
-    padding: 6px 24px;
-    font-size: 0.75rem;
-    color: var(--text-light);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    z-index: 100;
-}
-.dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--border);
-}
-.dot.ok { background: var(--success); }
-.dot.err { background: var(--danger); }
-
-/* ============================
    التذييل
    ============================ */
 .footer {
     text-align: center;
-    padding: 16px 24px 40px;
+    padding: 16px 24px 20px;
     font-size: 0.8rem;
     color: var(--text-light);
 }
@@ -688,6 +838,8 @@ body {
     .cmp-actions .btn-primary { width: 100%; }
     .kpi-grid { grid-template-columns: 1fr; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .login-box { padding: 24px 20px 20px; border-radius: 18px; }
+    .auth-badge { width: 100%; justify-content: space-between; }
 }
 @media (max-width: 480px) {
     .summary-row { grid-template-columns: 1fr; }
