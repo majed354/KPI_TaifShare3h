@@ -697,6 +697,114 @@ body.app-blocked { overflow: hidden; }
 .diff-same { color: var(--text-light); }
 
 /* ============================
+   الاستوديو الإحصائي
+   ============================ */
+.analytics-builder {
+    margin-bottom: 16px;
+}
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+.analytics-search-group {
+    margin-top: 16px;
+}
+.analytics-filter-shell {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+}
+.analytics-filter-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+.analytics-filter-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--primary-dark);
+}
+.analytics-filter-head p {
+    margin: 0;
+    font-size: 0.84rem;
+    color: var(--text-light);
+}
+.analytics-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+.metric-chip {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 15px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #fbfcfe;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.metric-chip:hover {
+    border-color: rgba(13,110,110,0.35);
+    box-shadow: 0 6px 16px rgba(13,110,110,0.08);
+}
+.metric-chip.is-checked {
+    border-color: rgba(13,110,110,0.45);
+    background: linear-gradient(135deg, rgba(13,110,110,0.08), rgba(201,162,39,0.08));
+}
+.metric-chip input {
+    margin-top: 2px;
+    accent-color: var(--primary);
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+.metric-chip-body {
+    min-width: 0;
+}
+.metric-chip-title {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.metric-chip-meta {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.75rem;
+    color: var(--text-light);
+}
+.analytics-actions {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.analytics-summary {
+    margin-top: 14px;
+    margin-bottom: 0;
+}
+.analytics-summary .summary-card {
+    text-align: right;
+}
+.analytics-chart-card {
+    margin-top: 16px;
+}
+.analytics-empty {
+    text-align: center;
+    color: var(--text-light);
+    padding: 30px 14px;
+    font-size: 0.92rem;
+}
+
+/* ============================
    التذييل
    ============================ */
 .footer {
@@ -840,6 +948,7 @@ body.app-blocked { overflow: hidden; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
     .login-box { padding: 24px 20px 20px; border-radius: 18px; }
     .auth-badge { width: 100%; justify-content: space-between; }
+    .analytics-metrics-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
     .summary-row { grid-template-columns: 1fr; }

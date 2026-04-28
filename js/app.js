@@ -79,6 +79,8 @@ let ncData = [];       // non-completer records
 let appBootstrapped = false;
 let appBootPromise = null;
 let loginMembersById = null;
+let analyticsChart = null;
+let currentAnalyticsReport = null;
 
 const SUPPORTED_KPI_DEGREES = new Set(['بكالوريوس','الماجستير','دكتوراه']);
 const RANK_ALLOWED_DEGREES = {
@@ -316,6 +318,7 @@ async function startApp() {
         await Promise.all([loadGraduates(), loadNonCompleters()]);
         initGraduatesView();
         initNonCompleteView();
+        initAnalyticsView();
 
         appBootstrapped = true;
         return true;
@@ -2697,6 +2700,1089 @@ function exportNCExcel() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'غير المكملين');
     XLSX.writeFile(wb, `غير-المكملين${statusFilter ? '-'+statusFilter : ''}.xlsx`);
+}
+
+// ========================================
+// الاستوديو الإحصائي
+// ========================================
+function analyticsSum(records, getter) {
+    return records.reduce((sum, row) => {
+        const value = Number(getter(row));
+        return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+}
+
+function analyticsAverage(records, getter) {
+    let sum = 0;
+    let count = 0;
+    records.forEach(row => {
+        const value = Number(getter(row));
+        if (!Number.isFinite(value)) return;
+        sum += value;
+        count++;
+    });
+    return count > 0 ? (sum / count) : null;
+}
+
+function analyticsWeightedAverage(records, valueGetter, weightGetter, fallbackWeight = 1) {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    records.forEach(row => {
+        const value = Number(valueGetter(row));
+        if (!Number.isFinite(value)) return;
+        const rawWeight = weightGetter ? Number(weightGetter(row)) : fallbackWeight;
+        const weight = Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : fallbackWeight;
+        weightedSum += value * weight;
+        totalWeight += weight;
+    });
+    return totalWeight > 0 ? (weightedSum / totalWeight) : null;
+}
+
+function analyticsCountWhere(records, predicate) {
+    return records.reduce((count, row) => count + (predicate(row) ? 1 : 0), 0);
+}
+
+function analyticsDistinctCount(records, getter) {
+    const values = new Set();
+    records.forEach(row => {
+        const value = String(getter(row) ?? '').trim();
+        if (value) values.add(value);
+    });
+    return values.size;
+}
+
+function analyticsUniqueRows(records, keyGetter) {
+    const map = new Map();
+    records.forEach(row => {
+        const key = String(keyGetter(row) ?? '').trim();
+        if (!key || map.has(key)) return;
+        map.set(key, row);
+    });
+    return [...map.values()];
+}
+
+function analyticsProgramResearchRows(records) {
+    return analyticsUniqueRows(records, row => {
+        const year = parseInt(row.Semester, 10);
+        const dept = normalizeDepartment(row.Dept_aName);
+        return year && dept ? `${year}|${dept}` : '';
+    });
+}
+
+function analyticsFormatCount(value) {
+    return value == null ? '—' : fmtNum(Math.round(value));
+}
+
+function analyticsFormatDecimal(value, frac = 2) {
+    return value == null ? '—' : fmtNumFlex(Number(value), frac);
+}
+
+function analyticsFormatPercent(value) {
+    return value == null ? '—' : `${Number(value).toFixed(1)}%`;
+}
+
+function analyticsFormatRatio(value) {
+    return value == null ? '—' : `1:${Number(value).toFixed(1)}`;
+}
+
+function analyticsMetricHeader(metric) {
+    return metric.unit ? `${metric.label} (${metric.unit})` : metric.label;
+}
+
+function analyticsText(value, fallback = 'غير محدد') {
+    const text = String(value ?? '').trim();
+    return text || fallback;
+}
+
+function analyticsQueryMatch(text, query) {
+    return normalizeArabicText(text).toLowerCase().includes(normalizeArabicText(query).toLowerCase());
+}
+
+function analyticsParseGPA(value) {
+    const num = parseFloat(String(value ?? '').trim().replace(',', '.'));
+    return Number.isFinite(num) ? num : null;
+}
+
+function analyticsDurationYears(startValue, endValue) {
+    const start = parseDaySerial(startValue);
+    const end = parseDaySerial(endValue);
+    if (start == null || end == null || end < start) return null;
+    const years = (end - start) / 365.25;
+    if (!Number.isFinite(years) || years < 0.2 || years > 15) return null;
+    return years;
+}
+
+function analyticsCountByStatus(records, keywords) {
+    const normalizedKeywords = keywords.map(k => normalizeArabicText(k));
+    return analyticsCountWhere(records, row => {
+        const status = normalizeArabicText(row['الحالة']);
+        return normalizedKeywords.some(keyword => status.includes(keyword));
+    });
+}
+
+function getAnalyticsSourceDefinitions() {
+    return {
+        programs: {
+            key: 'programs',
+            label: 'بيانات المؤشرات والبرامج',
+            rowLabel: 'سجل برنامج/سنة',
+            getRows: () => allRows,
+            getYear: row => parseInt(row.Semester, 10) || null,
+            searchText: row => [
+                row.Major_aName,
+                row.Dept_aName,
+                row.Degree_aName,
+                fmtYear(row.Semester)
+            ].join(' '),
+            filters: [
+                { id: 'dept', label: 'القسم', getValue: row => row.Dept_aName },
+                { id: 'degree', label: 'الدرجة', getValue: row => row.Degree_aName },
+                { id: 'program', label: 'البرنامج', getValue: row => row.Major_aName },
+            ],
+            groups: [
+                { id: 'year', label: 'السنة', getValue: row => parseInt(row.Semester, 10) || null, format: value => fmtYear(value), sort: 'numeric' },
+                { id: 'dept', label: 'القسم', getValue: row => row.Dept_aName, format: value => analyticsText(value), sort: 'text' },
+                { id: 'degree', label: 'الدرجة', getValue: row => row.Degree_aName, format: value => analyticsText(value), sort: 'text' },
+                { id: 'program', label: 'البرنامج', getValue: row => row.Major_aName, format: value => analyticsText(value), sort: 'text' },
+            ],
+            defaultMetrics: ['record_count', 'students_total', 'graduates_total', 'graduation_rate', 'retention_rate'],
+            metrics: [
+                { id: 'record_count', label: 'عدد السجلات', unit: 'سجل', compute: records => records.length, format: analyticsFormatCount },
+                { id: 'distinct_programs', label: 'عدد البرامج المختلفة', unit: 'برنامج', compute: records => analyticsDistinctCount(records, row => `${row.Major_aName}|${row.Degree_aName}`), format: analyticsFormatCount },
+                { id: 'students_total', label: 'إجمالي الطلاب', unit: 'طالب', compute: records => analyticsSum(records, row => row.students_total), format: analyticsFormatCount },
+                { id: 'students_male', label: 'الطلاب الذكور', unit: 'طالب', compute: records => analyticsSum(records, row => row.students_male), format: analyticsFormatCount },
+                { id: 'students_female', label: 'الطالبات', unit: 'طالبة', compute: records => analyticsSum(records, row => row.students_female), format: analyticsFormatCount },
+                { id: 'students_new', label: 'الطلاب المستجدون', unit: 'طالب', compute: records => analyticsSum(records, row => row.students_new), format: analyticsFormatCount },
+                { id: 'graduates_total', label: 'إجمالي الخريجين', unit: 'خريج', compute: records => analyticsSum(records, row => row.graduates_total), format: analyticsFormatCount },
+                { id: 'graduates_ontime', label: 'الخريجون بالوقت المحدد', unit: 'خريج', compute: records => analyticsSum(records, row => row.graduates_ontime), format: analyticsFormatCount },
+                { id: 'sections_total', label: 'إجمالي الشعب', unit: 'شعبة', compute: records => analyticsSum(records, row => row.sections_total), format: analyticsFormatCount },
+                { id: 'faculty_fte_total', label: 'إجمالي هيئة التدريس (FTE)', unit: 'عضو', compute: records => analyticsSum(records, row => getFacultyBaseForRatio(row)), format: value => analyticsFormatDecimal(value, 2) },
+                {
+                    id: 'student_faculty_ratio',
+                    label: 'نسبة الطلاب إلى هيئة التدريس',
+                    unit: 'نسبة',
+                    compute: records => {
+                        const totalStudents = analyticsSum(records, row => row.students_total);
+                        const totalFacultyBase = analyticsSum(records, row => getFacultyBaseForRatio(row));
+                        return totalFacultyBase > 0 ? (totalStudents / totalFacultyBase) : null;
+                    },
+                    format: analyticsFormatRatio
+                },
+                {
+                    id: 'course_eval',
+                    label: 'متوسط تقييم جودة المقررات',
+                    unit: 'درجة',
+                    compute: records => analyticsWeightedAverage(records, row => row.eval_courses, row => row.eval_courses_sample, 1),
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'experience_eval',
+                    label: 'متوسط جودة خبرات التعلم',
+                    unit: 'درجة',
+                    compute: records => analyticsWeightedAverage(records, row => row.eval_experience, row => row.eval_experience_sample, 1),
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'supervision_eval',
+                    label: 'متوسط جودة الإشراف العلمي',
+                    unit: 'درجة',
+                    compute: records => analyticsWeightedAverage(records, row => row.eval_supervision, row => row.eval_supervision_sample, 1),
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'services_eval',
+                    label: 'متوسط رضا الطلاب عن الخدمات',
+                    unit: 'درجة',
+                    compute: records => analyticsWeightedAverage(records, row => row.eval_services, row => row.eval_services_sample, 1),
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'student_performance',
+                    label: 'متوسط مستوى أداء الطالب',
+                    unit: '%',
+                    compute: records => analyticsWeightedAverage(records, row => row.performance_rate, row => row.performance_rate_sample, 1),
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'employment_rate',
+                    label: 'توظيف الخريجين أو التحاقهم بالدراسات العليا',
+                    unit: '%',
+                    compute: records => analyticsWeightedAverage(records, row => row.employment_rate, row => row.employment_rate_sample, 1),
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'employer_eval',
+                    label: 'متوسط تقويم جهات التوظيف',
+                    unit: 'درجة',
+                    compute: records => analyticsWeightedAverage(records, row => row.eval_employers, row => row.eval_employers_sample, 1),
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'graduation_rate',
+                    label: 'معدل التخرج بالوقت المحدد',
+                    unit: '%',
+                    compute: records => pct(
+                        analyticsSum(records, row => row.graduates_ontime),
+                        analyticsSum(records, row => row.new_4_ago_count)
+                    ),
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'retention_rate',
+                    label: 'معدل الاستبقاء',
+                    unit: '%',
+                    compute: records => pct(
+                        analyticsSum(records, row => row.students_retained),
+                        analyticsSum(records, row => row.prev_new_count)
+                    ),
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'dropout_rate',
+                    label: 'معدل التسرب',
+                    unit: '%',
+                    compute: records => {
+                        const retention = pct(
+                            analyticsSum(records, row => row.students_retained),
+                            analyticsSum(records, row => row.prev_new_count)
+                        );
+                        return retention == null ? null : Math.round((100 - retention) * 10) / 10;
+                    },
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'publication_pct',
+                    label: 'النسبة المئوية للنشر العلمي',
+                    unit: '%',
+                    compute: records => {
+                        const baseRows = analyticsProgramResearchRows(records);
+                        return pct(
+                            analyticsSum(baseRows, row => row.faculty_published),
+                            analyticsSum(baseRows, row => row.faculty_total)
+                        );
+                    },
+                    format: analyticsFormatPercent
+                },
+                {
+                    id: 'research_count',
+                    label: 'إجمالي البحوث المنشورة',
+                    unit: 'بحث',
+                    compute: records => analyticsSum(analyticsProgramResearchRows(records), row => row.research_count),
+                    format: analyticsFormatCount
+                },
+                {
+                    id: 'research_per_faculty',
+                    label: 'معدل البحوث لكل عضو هيئة تدريس',
+                    unit: 'بحث',
+                    compute: records => {
+                        const baseRows = analyticsProgramResearchRows(records);
+                        const facultyTotal = analyticsSum(baseRows, row => row.faculty_total);
+                        const researchTotal = analyticsSum(baseRows, row => row.research_count);
+                        return facultyTotal > 0 ? (researchTotal / facultyTotal) : null;
+                    },
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+                {
+                    id: 'citations_total',
+                    label: 'إجمالي الاقتباسات',
+                    unit: 'اقتباس',
+                    compute: records => analyticsSum(analyticsProgramResearchRows(records), row => row.citations),
+                    format: value => analyticsFormatDecimal(value, 1)
+                },
+                {
+                    id: 'citations_per_publication',
+                    label: 'معدل الاقتباسات لكل بحث',
+                    unit: 'اقتباس',
+                    compute: records => {
+                        const baseRows = analyticsProgramResearchRows(records);
+                        const researchTotal = analyticsSum(baseRows, row => row.research_count);
+                        const citationsTotal = analyticsSum(baseRows, row => row.citations);
+                        return researchTotal > 0 ? (citationsTotal / researchTotal) : null;
+                    },
+                    format: value => analyticsFormatDecimal(value, 2)
+                },
+            ],
+        },
+        graduates: {
+            key: 'graduates',
+            label: 'سجل الخريجين',
+            rowLabel: 'سجل خريج',
+            getRows: () => gradData,
+            getYear: row => parseAcademicYear(row['السنة']),
+            searchText: row => [
+                row['الاسم'],
+                row['الرقم_الجامعي'],
+                row['التخصص'],
+                row['الدرجة'],
+                row['القسم']
+            ].join(' '),
+            filters: [
+                { id: 'dept', label: 'القسم', getValue: row => row['القسم'] },
+                { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'] },
+                { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'] },
+                { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'] },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'] },
+            ],
+            groups: [
+                { id: 'year', label: 'السنة', getValue: row => parseAcademicYear(row['السنة']), format: value => fmtYear(value), sort: 'numeric' },
+                { id: 'dept', label: 'القسم', getValue: row => row['القسم'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'], format: value => analyticsText(value), sort: 'text' },
+            ],
+            defaultMetrics: ['record_count', 'avg_gpa', 'avg_study_duration', 'ontime_expected_rate'],
+            metrics: [
+                { id: 'record_count', label: 'عدد السجلات', unit: 'خريج', compute: records => records.length, format: analyticsFormatCount },
+                { id: 'distinct_programs', label: 'عدد البرامج المختلفة', unit: 'برنامج', compute: records => analyticsDistinctCount(records, row => `${row['التخصص']}|${row['الدرجة']}`), format: analyticsFormatCount },
+                { id: 'male_count', label: 'عدد الذكور', unit: 'خريج', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنس']).includes('ذكر')), format: analyticsFormatCount },
+                { id: 'female_count', label: 'عدد الإناث', unit: 'خريجة', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنس']).includes('أنث')), format: analyticsFormatCount },
+                { id: 'saudi_count', label: 'عدد السعوديين', unit: 'خريج', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنسية']).includes('سعود')), format: analyticsFormatCount },
+                { id: 'non_saudi_count', label: 'عدد غير السعوديين', unit: 'خريج', compute: records => analyticsCountWhere(records, row => !normalizeArabicText(row['الجنسية']).includes('سعود')), format: analyticsFormatCount },
+                { id: 'avg_gpa', label: 'متوسط المعدل', unit: 'معدل', compute: records => analyticsAverage(records, row => analyticsParseGPA(row['المعدل'])), format: value => analyticsFormatDecimal(value, 2) },
+                { id: 'min_gpa', label: 'أقل معدل', unit: 'معدل', compute: records => {
+                    const values = records.map(row => analyticsParseGPA(row['المعدل'])).filter(v => v != null);
+                    return values.length ? Math.min(...values) : null;
+                }, format: value => analyticsFormatDecimal(value, 2) },
+                { id: 'max_gpa', label: 'أعلى معدل', unit: 'معدل', compute: records => {
+                    const values = records.map(row => analyticsParseGPA(row['المعدل'])).filter(v => v != null);
+                    return values.length ? Math.max(...values) : null;
+                }, format: value => analyticsFormatDecimal(value, 2) },
+                { id: 'avg_study_duration', label: 'متوسط مدة الدراسة حتى التخرج', unit: 'سنة', compute: records => analyticsAverage(records, row =>
+                    analyticsDurationYears(row['تاريخ_القبول'], row['تاريخ_التخرج'])
+                ), format: value => analyticsFormatDecimal(value, 2) },
+                { id: 'ontime_expected_rate', label: 'الالتزام بموعد التخرج المتوقع', unit: '%', compute: records => {
+                    let matched = 0;
+                    let total = 0;
+                    records.forEach(row => {
+                        const expected = parseDaySerial(row['تاريخ_التخرج_المتوقع']);
+                        const actual = parseDaySerial(row['تاريخ_التخرج']);
+                        if (expected == null || actual == null) return;
+                        total++;
+                        if (actual <= expected) matched++;
+                    });
+                    return pct(matched, total);
+                }, format: analyticsFormatPercent },
+            ],
+        },
+        noncomplete: {
+            key: 'noncomplete',
+            label: 'سجل غير المكملين',
+            rowLabel: 'سجل طالب',
+            getRows: () => ncData,
+            getYear: row => parseAcademicYear(row['آخر_سنة']),
+            searchText: row => [
+                row['الاسم'],
+                row['الرقم_الجامعي'],
+                row['التخصص'],
+                row['الدرجة'],
+                row['القسم'],
+                row['الحالة']
+            ].join(' '),
+            filters: [
+                { id: 'dept', label: 'القسم', getValue: row => row['القسم'] },
+                { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'] },
+                { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'] },
+                { id: 'status', label: 'الحالة', getValue: row => row['الحالة'] },
+                { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'] },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'] },
+                { id: 'study_type', label: 'نوع الدراسة', getValue: row => row['نوع_الدراسة'] },
+            ],
+            groups: [
+                { id: 'year', label: 'آخر سنة', getValue: row => parseAcademicYear(row['آخر_سنة']), format: value => fmtYear(value), sort: 'numeric' },
+                { id: 'dept', label: 'القسم', getValue: row => row['القسم'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'status', label: 'الحالة', getValue: row => row['الحالة'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'study_type', label: 'نوع الدراسة', getValue: row => row['نوع_الدراسة'], format: value => analyticsText(value), sort: 'text' },
+            ],
+            defaultMetrics: ['record_count', 'avg_gpa', 'withdrawn_count', 'folded_count'],
+            metrics: [
+                { id: 'record_count', label: 'عدد السجلات', unit: 'طالب', compute: records => records.length, format: analyticsFormatCount },
+                { id: 'distinct_programs', label: 'عدد البرامج المختلفة', unit: 'برنامج', compute: records => analyticsDistinctCount(records, row => `${row['التخصص']}|${row['الدرجة']}`), format: analyticsFormatCount },
+                { id: 'male_count', label: 'عدد الذكور', unit: 'طالب', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنس']).includes('ذكر')), format: analyticsFormatCount },
+                { id: 'female_count', label: 'عدد الإناث', unit: 'طالبة', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنس']).includes('أنث')), format: analyticsFormatCount },
+                { id: 'saudi_count', label: 'عدد السعوديين', unit: 'طالب', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['الجنسية']).includes('سعود')), format: analyticsFormatCount },
+                { id: 'non_saudi_count', label: 'عدد غير السعوديين', unit: 'طالب', compute: records => analyticsCountWhere(records, row => !normalizeArabicText(row['الجنسية']).includes('سعود')), format: analyticsFormatCount },
+                { id: 'avg_gpa', label: 'متوسط المعدل', unit: 'معدل', compute: records => analyticsAverage(records, row => analyticsParseGPA(row['المعدل'])), format: value => analyticsFormatDecimal(value, 2) },
+                { id: 'withdrawn_count', label: 'حالات الانسحاب', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['منسحب']), format: analyticsFormatCount },
+                { id: 'folded_count', label: 'مطوي القيد', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['مطوي']), format: analyticsFormatCount },
+                { id: 'absent_count', label: 'المنقطعون عن الدراسة', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['منقطع']), format: analyticsFormatCount },
+                { id: 'postponed_count', label: 'حالات التأجيل', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['مؤجل']), format: analyticsFormatCount },
+                { id: 'dismissed_count', label: 'الحالات الأكاديمية المفصولة', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['مفصول']), format: analyticsFormatCount },
+                { id: 'excused_count', label: 'حالات الاعتذار', unit: 'حالة', compute: records => analyticsCountByStatus(records, ['معتذر']), format: analyticsFormatCount },
+                { id: 'regular_study_count', label: 'عدد المنتظمين', unit: 'طالب', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row['نوع_الدراسة']).includes('منتظم')), format: analyticsFormatCount },
+                { id: 'distinct_statuses', label: 'عدد الحالات المختلفة', unit: 'حالة', compute: records => analyticsDistinctCount(records, row => row['الحالة']), format: analyticsFormatCount },
+            ],
+        }
+    };
+}
+
+function getAnalyticsCurrentSource() {
+    const sources = getAnalyticsSourceDefinitions();
+    const selectedKey = document.getElementById('analytics-source')?.value;
+    return sources[selectedKey] || Object.values(sources)[0];
+}
+
+function initAnalyticsView() {
+    const sourceSelect = document.getElementById('analytics-source');
+    const modeSelect = document.getElementById('analytics-mode');
+    if (!sourceSelect || !modeSelect) return;
+    if (sourceSelect.dataset.ready === 'true') return;
+
+    const sources = Object.values(getAnalyticsSourceDefinitions());
+    sourceSelect.innerHTML = sources.map(source =>
+        `<option value="${source.key}">${source.label}</option>`
+    ).join('');
+
+    sourceSelect.addEventListener('change', () => {
+        renderAnalyticsBuilder(true);
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    modeSelect.addEventListener('change', () => {
+        syncAnalyticsGroupingState();
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-group-primary')?.addEventListener('change', () => {
+        updateAnalyticsSecondaryGroups();
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-group-secondary')?.addEventListener('change', () => {
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-year-from')?.addEventListener('change', () => {
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-year-to')?.addEventListener('change', () => {
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-search')?.addEventListener('input', () => {
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+    });
+    document.getElementById('analytics-run')?.addEventListener('click', runAnalyticsReport);
+    document.getElementById('analytics-reset')?.addEventListener('click', resetAnalyticsView);
+
+    sourceSelect.dataset.ready = 'true';
+    resetAnalyticsView();
+}
+
+function resetAnalyticsView() {
+    const sourceSelect = document.getElementById('analytics-source');
+    const modeSelect = document.getElementById('analytics-mode');
+    const searchInput = document.getElementById('analytics-search');
+    if (modeSelect) modeSelect.value = 'summary';
+    if (sourceSelect && !sourceSelect.value) {
+        const firstOption = sourceSelect.querySelector('option');
+        sourceSelect.value = firstOption ? firstOption.value : '';
+    }
+    if (searchInput) searchInput.value = '';
+    renderAnalyticsBuilder(true);
+    document.getElementById('analytics-results').classList.add('hidden');
+    currentAnalyticsReport = null;
+    destroyAnalyticsChart();
+}
+
+function renderAnalyticsBuilder(resetSelections = false) {
+    const source = getAnalyticsCurrentSource();
+    if (!source) return;
+
+    renderAnalyticsYears(source, resetSelections);
+    renderAnalyticsGroups(source, resetSelections);
+    renderAnalyticsFilters(source);
+    renderAnalyticsMetrics(source);
+    syncAnalyticsGroupingState();
+
+    const filterCaption = document.getElementById('analytics-filter-caption');
+    if (filterCaption) {
+        const labels = source.filters.map(field => field.label).join('، ');
+        filterCaption.textContent = labels
+            ? `متاحة لهذا المصدر: ${labels}.`
+            : 'لا توجد فلاتر إضافية لهذا المصدر.';
+    }
+}
+
+function renderAnalyticsYears(source, resetSelections = false) {
+    const fromSelect = document.getElementById('analytics-year-from');
+    const toSelect = document.getElementById('analytics-year-to');
+    const years = [...new Set(source.getRows().map(row => source.getYear(row)).filter(Boolean))].sort((a, b) => a - b);
+
+    if (!years.length) {
+        fromSelect.innerHTML = '<option value="">—</option>';
+        toSelect.innerHTML = '<option value="">—</option>';
+        return;
+    }
+
+    const currentFrom = !resetSelections ? fromSelect.value : '';
+    const currentTo = !resetSelections ? toSelect.value : '';
+    const options = years.map(year => `<option value="${year}">${fmtYear(year)}</option>`).join('');
+    fromSelect.innerHTML = options;
+    toSelect.innerHTML = options;
+    fromSelect.value = years.includes(parseInt(currentFrom, 10)) ? currentFrom : String(years[0]);
+    toSelect.value = years.includes(parseInt(currentTo, 10)) ? currentTo : String(years[years.length - 1]);
+}
+
+function renderAnalyticsGroups(source, resetSelections = false) {
+    const primarySelect = document.getElementById('analytics-group-primary');
+    const currentPrimary = !resetSelections ? primarySelect.value : '';
+
+    primarySelect.innerHTML = '<option value="">بدون تجميع</option>' +
+        source.groups.map(group => `<option value="${group.id}">${group.label}</option>`).join('');
+
+    if (currentPrimary && source.groups.some(group => group.id === currentPrimary)) {
+        primarySelect.value = currentPrimary;
+    } else {
+        primarySelect.value = '';
+    }
+    updateAnalyticsSecondaryGroups(resetSelections);
+}
+
+function updateAnalyticsSecondaryGroups(resetSelections = false) {
+    const source = getAnalyticsCurrentSource();
+    const primarySelect = document.getElementById('analytics-group-primary');
+    const secondarySelect = document.getElementById('analytics-group-secondary');
+    const currentSecondary = !resetSelections ? secondarySelect.value : '';
+    const primaryValue = primarySelect.value;
+
+    const options = source.groups
+        .filter(group => group.id !== primaryValue)
+        .map(group => `<option value="${group.id}">${group.label}</option>`)
+        .join('');
+    secondarySelect.innerHTML = '<option value="">بدون تجميع ثانوي</option>' + options;
+
+    if (currentSecondary && source.groups.some(group => group.id === currentSecondary && group.id !== primaryValue)) {
+        secondarySelect.value = currentSecondary;
+    } else {
+        secondarySelect.value = '';
+    }
+}
+
+function syncAnalyticsGroupingState() {
+    const source = getAnalyticsCurrentSource();
+    const mode = document.getElementById('analytics-mode')?.value || 'summary';
+    const primarySelect = document.getElementById('analytics-group-primary');
+    const secondarySelect = document.getElementById('analytics-group-secondary');
+    const isDetail = mode === 'detail';
+
+    if (!isDetail) {
+        primarySelect.value = '';
+        secondarySelect.value = '';
+        primarySelect.disabled = true;
+        secondarySelect.disabled = true;
+        return;
+    }
+
+    primarySelect.disabled = false;
+    if (!primarySelect.value && source.groups.length) primarySelect.value = source.groups[0].id;
+    updateAnalyticsSecondaryGroups();
+    secondarySelect.disabled = false;
+}
+
+function renderAnalyticsFilters(source) {
+    const filtersWrap = document.getElementById('analytics-filters');
+    const sourceRows = source.getRows();
+    filtersWrap.innerHTML = source.filters.map(field => {
+        const values = [...new Set(sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, 'ar'));
+        return `<div class="form-group">
+            <label>${field.label}</label>
+            <select id="analytics-filter-${field.id}">
+                <option value="">الكل</option>
+                ${values.map(value => `<option value="${value}">${value}</option>`).join('')}
+            </select>
+        </div>`;
+    }).join('');
+
+    filtersWrap.querySelectorAll('select').forEach(select => {
+        select.addEventListener('change', () => {
+            document.getElementById('analytics-results').classList.add('hidden');
+            currentAnalyticsReport = null;
+        });
+    });
+}
+
+function renderAnalyticsMetrics(source) {
+    const metricsWrap = document.getElementById('analytics-metrics');
+    metricsWrap.innerHTML = source.metrics.map(metric => {
+        const checked = source.defaultMetrics.includes(metric.id) ? 'checked' : '';
+        return `<label class="metric-chip ${checked ? 'is-checked' : ''}">
+            <input type="checkbox" value="${metric.id}" ${checked}>
+            <span class="metric-chip-body">
+                <span class="metric-chip-title">${metric.label}</span>
+                <span class="metric-chip-meta">${metric.unit ? `الوحدة: ${metric.unit}` : 'قيمة مباشرة'}</span>
+            </span>
+        </label>`;
+    }).join('');
+
+    metricsWrap.querySelectorAll('input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', () => {
+            input.closest('.metric-chip')?.classList.toggle('is-checked', input.checked);
+            document.getElementById('analytics-results').classList.add('hidden');
+            currentAnalyticsReport = null;
+        });
+    });
+}
+
+function getSelectedAnalyticsMetricDefs(source) {
+    const selected = [...document.querySelectorAll('#analytics-metrics input[type="checkbox"]:checked')]
+        .map(input => input.value);
+    return source.metrics.filter(metric => selected.includes(metric.id));
+}
+
+function getAnalyticsFilteredRows(source) {
+    const fromYear = parseInt(document.getElementById('analytics-year-from')?.value, 10) || null;
+    const toYear = parseInt(document.getElementById('analytics-year-to')?.value, 10) || null;
+    const yearMin = fromYear && toYear ? Math.min(fromYear, toYear) : (fromYear || toYear);
+    const yearMax = fromYear && toYear ? Math.max(fromYear, toYear) : (fromYear || toYear);
+    const search = document.getElementById('analytics-search')?.value || '';
+
+    let rows = [...source.getRows()];
+    rows = rows.filter(row => {
+        const year = source.getYear(row);
+        if (!year) return false;
+        if (yearMin && year < yearMin) return false;
+        if (yearMax && year > yearMax) return false;
+        return true;
+    });
+
+    source.filters.forEach(field => {
+        const select = document.getElementById(`analytics-filter-${field.id}`);
+        const wanted = String(select?.value || '').trim();
+        if (!wanted) return;
+        rows = rows.filter(row => analyticsText(field.getValue(row), '') === wanted);
+    });
+
+    if (search.trim()) {
+        rows = rows.filter(row => analyticsQueryMatch(source.searchText(row), search));
+    }
+
+    return rows;
+}
+
+function computeAnalyticsMetricValues(records, metricDefs) {
+    const values = {};
+    metricDefs.forEach(metric => {
+        values[metric.id] = metric.compute(records);
+    });
+    return values;
+}
+
+function buildAnalyticsYearLabel(filteredRows, source) {
+    const years = [...new Set(filteredRows.map(row => source.getYear(row)).filter(Boolean))].sort((a, b) => a - b);
+    if (!years.length) return '—';
+    if (years.length === 1) return fmtYear(years[0]);
+    return `${fmtYear(years[0])} - ${fmtYear(years[years.length - 1])}`;
+}
+
+function sortAnalyticsGroups(rows, primaryGroup, secondaryGroup) {
+    const compareValue = (a, b, group) => {
+        if (!group) return 0;
+        if (group.sort === 'numeric') return (Number(a) || 0) - (Number(b) || 0);
+        return analyticsText(group.format ? group.format(a) : a).localeCompare(
+            analyticsText(group.format ? group.format(b) : b),
+            'ar'
+        );
+    };
+
+    rows.sort((a, b) => {
+        const primaryCmp = compareValue(a.primaryValue, b.primaryValue, primaryGroup);
+        if (primaryCmp !== 0) return primaryCmp;
+        return compareValue(a.secondaryValue, b.secondaryValue, secondaryGroup);
+    });
+}
+
+function buildAnalyticsCaption(report) {
+    const parts = [
+        report.source.label,
+        report.mode === 'summary' ? 'تقرير إجمالي' : 'تقرير تفصيلي',
+        `الفترة: ${report.yearLabel}`
+    ];
+    if (report.mode === 'detail' && report.primaryGroup) {
+        const grouping = report.secondaryGroup
+            ? `${report.primaryGroup.label} ثم ${report.secondaryGroup.label}`
+            : report.primaryGroup.label;
+        parts.push(`التجميع: ${grouping}`);
+    }
+    if (report.activeFilters.length) {
+        parts.push(`الفلاتر: ${report.activeFilters.join('، ')}`);
+    }
+    if (report.searchText) {
+        parts.push(`البحث: ${report.searchText}`);
+    }
+    return parts.join(' | ');
+}
+
+function runAnalyticsReport() {
+    const source = getAnalyticsCurrentSource();
+    const mode = document.getElementById('analytics-mode')?.value || 'summary';
+    const metricDefs = getSelectedAnalyticsMetricDefs(source);
+
+    if (!metricDefs.length) {
+        alert('اختر إحصائية واحدة على الأقل قبل بناء التقرير.');
+        return;
+    }
+
+    const filteredRows = getAnalyticsFilteredRows(source);
+    if (!filteredRows.length) {
+        document.getElementById('analytics-results').classList.add('hidden');
+        currentAnalyticsReport = null;
+        destroyAnalyticsChart();
+        alert('لا توجد بيانات مطابقة للفلاتر المختارة.');
+        return;
+    }
+
+    const activeFilters = source.filters
+        .map(field => {
+            const value = String(document.getElementById(`analytics-filter-${field.id}`)?.value || '').trim();
+            return value ? `${field.label}: ${value}` : '';
+        })
+        .filter(Boolean);
+
+    const yearLabel = buildAnalyticsYearLabel(filteredRows, source);
+    const searchText = String(document.getElementById('analytics-search')?.value || '').trim();
+    let reportRows = [];
+    let primaryGroup = null;
+    let secondaryGroup = null;
+
+    if (mode === 'summary') {
+        reportRows = [{
+            primaryValue: 'الإجمالي',
+            secondaryValue: '',
+            records: filteredRows,
+            metricValues: computeAnalyticsMetricValues(filteredRows, metricDefs)
+        }];
+    } else {
+        const primaryId = document.getElementById('analytics-group-primary')?.value || '';
+        const secondaryId = document.getElementById('analytics-group-secondary')?.value || '';
+        primaryGroup = source.groups.find(group => group.id === primaryId) || null;
+        secondaryGroup = source.groups.find(group => group.id === secondaryId) || null;
+
+        if (!primaryGroup) {
+            alert('اختر التجميع الأساسي للتقرير التفصيلي.');
+            return;
+        }
+
+        const grouped = new Map();
+        filteredRows.forEach(row => {
+            const primaryValue = primaryGroup.getValue(row);
+            const secondaryValue = secondaryGroup ? secondaryGroup.getValue(row) : '';
+            const key = `${analyticsText(primaryValue)}||${analyticsText(secondaryValue, '')}`;
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    primaryValue,
+                    secondaryValue,
+                    records: []
+                });
+            }
+            grouped.get(key).records.push(row);
+        });
+
+        reportRows = [...grouped.values()].map(group => ({
+            ...group,
+            metricValues: computeAnalyticsMetricValues(group.records, metricDefs)
+        }));
+        sortAnalyticsGroups(reportRows, primaryGroup, secondaryGroup);
+    }
+
+    const tableHeaders = [];
+    if (mode === 'detail' && primaryGroup) tableHeaders.push(primaryGroup.label);
+    if (mode === 'detail' && secondaryGroup) tableHeaders.push(secondaryGroup.label);
+    if (mode === 'summary') tableHeaders.push('النطاق');
+    tableHeaders.push(...metricDefs.map(analyticsMetricHeader));
+
+    const tableRows = reportRows.map(row => {
+        const cells = [];
+        if (mode === 'detail' && primaryGroup) {
+            cells.push(primaryGroup.format ? primaryGroup.format(row.primaryValue) : analyticsText(row.primaryValue));
+        }
+        if (mode === 'detail' && secondaryGroup) {
+            cells.push(secondaryGroup.format ? secondaryGroup.format(row.secondaryValue) : analyticsText(row.secondaryValue));
+        }
+        if (mode === 'summary') {
+            cells.push('إجمالي البيانات المطابقة');
+        }
+        metricDefs.forEach(metric => {
+            cells.push(metric.format(row.metricValues[metric.id]));
+        });
+        return cells;
+    });
+
+    currentAnalyticsReport = {
+        source,
+        mode,
+        yearLabel,
+        searchText,
+        activeFilters,
+        filteredRowsCount: filteredRows.length,
+        outputRowsCount: reportRows.length,
+        metricDefs,
+        primaryGroup,
+        secondaryGroup,
+        rows: reportRows,
+        tableHeaders,
+        tableRows,
+        caption: '',
+        filenameBase: safeFileName(`الاستوديو-الإحصائي-${source.label}-${mode === 'summary' ? 'إجمالي' : 'تفصيلي'}`)
+    };
+    currentAnalyticsReport.caption = buildAnalyticsCaption(currentAnalyticsReport);
+
+    renderAnalyticsResults();
+}
+
+function renderAnalyticsResults() {
+    if (!currentAnalyticsReport) return;
+
+    document.getElementById('analytics-caption').textContent = currentAnalyticsReport.caption;
+    renderAnalyticsSummary();
+    renderAnalyticsTable();
+    renderAnalyticsChart();
+    document.getElementById('analytics-results').classList.remove('hidden');
+    document.getElementById('analytics-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderAnalyticsSummary() {
+    const container = document.getElementById('analytics-summary');
+    if (!currentAnalyticsReport) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let cards = [];
+    if (currentAnalyticsReport.mode === 'summary') {
+        const summaryRow = currentAnalyticsReport.rows[0];
+        cards = [
+            { value: fmtNum(currentAnalyticsReport.filteredRowsCount), label: currentAnalyticsReport.source.rowLabel },
+            { value: currentAnalyticsReport.yearLabel, label: 'الفترة الزمنية' },
+            ...currentAnalyticsReport.metricDefs.slice(0, 4).map(metric => ({
+                value: metric.format(summaryRow.metricValues[metric.id]),
+                label: metric.label
+            }))
+        ];
+    } else {
+        const groupingLabel = currentAnalyticsReport.secondaryGroup
+            ? `${currentAnalyticsReport.primaryGroup.label} + ${currentAnalyticsReport.secondaryGroup.label}`
+            : currentAnalyticsReport.primaryGroup?.label || '—';
+        cards = [
+            { value: currentAnalyticsReport.source.label, label: 'مصدر البيانات' },
+            { value: fmtNum(currentAnalyticsReport.filteredRowsCount), label: currentAnalyticsReport.source.rowLabel },
+            { value: fmtNum(currentAnalyticsReport.outputRowsCount), label: 'المجموعات الناتجة' },
+            { value: currentAnalyticsReport.yearLabel, label: 'الفترة الزمنية' },
+            { value: groupingLabel, label: 'مستوى التفصيل' },
+            { value: fmtNum(currentAnalyticsReport.metricDefs.length), label: 'الإحصاءات المختارة' },
+        ];
+    }
+
+    container.innerHTML = cards.map(card => `
+        <div class="summary-card">
+            <div class="sc-value">${card.value}</div>
+            <div class="sc-label">${card.label}</div>
+        </div>
+    `).join('');
+}
+
+function renderAnalyticsTable() {
+    const thead = document.getElementById('analytics-thead');
+    const tbody = document.getElementById('analytics-tbody');
+    if (!currentAnalyticsReport) {
+        thead.innerHTML = '';
+        tbody.innerHTML = '';
+        return;
+    }
+
+    thead.innerHTML = `<tr>${currentAnalyticsReport.tableHeaders.map(header => `<th>${header}</th>`).join('')}</tr>`;
+    tbody.innerHTML = currentAnalyticsReport.tableRows.map(row => `
+        <tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>
+    `).join('');
+}
+
+function destroyAnalyticsChart() {
+    if (analyticsChart) {
+        analyticsChart.destroy();
+        analyticsChart = null;
+    }
+}
+
+function ensureAnalyticsChartCanvas() {
+    const wrap = document.querySelector('#analytics-view .analytics-chart-card .chart-wrap');
+    if (!wrap) return null;
+    if (!document.getElementById('analytics-chart')) {
+        wrap.innerHTML = '<canvas id="analytics-chart"></canvas>';
+    }
+    return wrap;
+}
+
+function renderAnalyticsChart() {
+    const cardTitle = document.querySelector('.analytics-chart-card h3');
+    const wrap = ensureAnalyticsChartCanvas();
+    if (!currentAnalyticsReport || !wrap) return;
+
+    destroyAnalyticsChart();
+    const firstMetric = currentAnalyticsReport.metricDefs[0];
+    if (!firstMetric) {
+        wrap.innerHTML = '<div class="analytics-empty">لا توجد إحصاءات مختارة للرسم.</div>';
+        return;
+    }
+
+    const ctx = document.getElementById('analytics-chart')?.getContext('2d');
+    if (!ctx) return;
+
+    if (currentAnalyticsReport.mode === 'summary') {
+        const labels = currentAnalyticsReport.metricDefs.map(metric => metric.label);
+        const data = currentAnalyticsReport.metricDefs.map(metric => {
+            const value = currentAnalyticsReport.rows[0].metricValues[metric.id];
+            return value == null ? 0 : Number(value);
+        });
+        if (cardTitle) cardTitle.textContent = 'التمثيل البياني للإحصاءات المختارة';
+        analyticsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'القيم الإجمالية',
+                    data,
+                    backgroundColor: labels.map((_, index) => CHART_COLORS[index % CHART_COLORS.length]),
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: item => `${item.dataset.label}: ${fmtNumFlex(item.parsed.y ?? item.parsed, 2)}` } }
+                },
+                scales: {
+                    x: { ticks: { font: { family: 'Tajawal', size: 10 } } },
+                    y: { beginAtZero: true, ticks: { font: { family: 'Tajawal' } }, grid: { color: '#f0f0f0' } }
+                }
+            }
+        });
+        return;
+    }
+
+    const maxGroups = 20;
+    const chartRows = currentAnalyticsReport.rows.slice(0, maxGroups);
+    if (currentAnalyticsReport.secondaryGroup) {
+        const primaryGroup = currentAnalyticsReport.primaryGroup;
+        const secondaryGroup = currentAnalyticsReport.secondaryGroup;
+        const primaryLabels = [...new Set(chartRows.map(row => primaryGroup.format ? primaryGroup.format(row.primaryValue) : analyticsText(row.primaryValue)))];
+        const secondaryLabels = [...new Set(chartRows.map(row => secondaryGroup.format ? secondaryGroup.format(row.secondaryValue) : analyticsText(row.secondaryValue)))];
+
+        const datasets = secondaryLabels.map((secondaryLabel, index) => ({
+            label: secondaryLabel,
+            data: primaryLabels.map(primaryLabel => {
+                const found = chartRows.find(row =>
+                    (primaryGroup.format ? primaryGroup.format(row.primaryValue) : analyticsText(row.primaryValue)) === primaryLabel &&
+                    (secondaryGroup.format ? secondaryGroup.format(row.secondaryValue) : analyticsText(row.secondaryValue)) === secondaryLabel
+                );
+                return found ? (Number(found.metricValues[firstMetric.id]) || 0) : 0;
+            }),
+            backgroundColor: CHART_COLORS[index % CHART_COLORS.length],
+            borderRadius: 4
+        }));
+
+        if (cardTitle) cardTitle.textContent = `التمثيل البياني: ${firstMetric.label}`;
+        analyticsChart = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: primaryLabels, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { font: { family: 'Tajawal' } } } },
+                scales: {
+                    x: { ticks: { font: { family: 'Tajawal', size: 10 } } },
+                    y: { beginAtZero: true, ticks: { font: { family: 'Tajawal' } }, grid: { color: '#f0f0f0' } }
+                }
+            }
+        });
+        return;
+    }
+
+    const labels = chartRows.map(row =>
+        currentAnalyticsReport.primaryGroup?.format
+            ? currentAnalyticsReport.primaryGroup.format(row.primaryValue)
+            : analyticsText(row.primaryValue)
+    );
+    const data = chartRows.map(row => {
+        const value = row.metricValues[firstMetric.id];
+        return value == null ? 0 : Number(value);
+    });
+
+    if (cardTitle) {
+        const suffix = currentAnalyticsReport.rows.length > maxGroups ? ' (أول 20 مجموعة)' : '';
+        cardTitle.textContent = `التمثيل البياني: ${firstMetric.label}${suffix}`;
+    }
+    analyticsChart = new Chart(ctx, {
+        type: currentAnalyticsReport.primaryGroup?.id === 'year' ? 'line' : 'bar',
+        data: {
+            labels,
+            datasets: [{
+                label: firstMetric.label,
+                data,
+                borderColor: '#0d8e8e',
+                backgroundColor: currentAnalyticsReport.primaryGroup?.id === 'year'
+                    ? 'rgba(13,142,142,0.15)'
+                    : labels.map((_, index) => CHART_COLORS[index % CHART_COLORS.length]),
+                borderRadius: 6,
+                fill: currentAnalyticsReport.primaryGroup?.id === 'year',
+                tension: 0.25,
+                pointRadius: currentAnalyticsReport.primaryGroup?.id === 'year' ? 4 : 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: currentAnalyticsReport.primaryGroup?.id === 'year', labels: { font: { family: 'Tajawal' } } }
+            },
+            scales: {
+                x: { ticks: { font: { family: 'Tajawal', size: 10 } } },
+                y: { beginAtZero: true, ticks: { font: { family: 'Tajawal' } }, grid: { color: '#f0f0f0' } }
+            }
+        }
+    });
+}
+
+async function exportAnalyticsPDF() {
+    if (!currentAnalyticsReport) return;
+    await exportSectionAsPDF('analytics-export-area', `${currentAnalyticsReport.filenameBase}.pdf`);
+}
+
+function exportAnalyticsExcel() {
+    if (!currentAnalyticsReport) return;
+    const rows = [
+        ['الاستوديو الإحصائي'],
+        ['المصدر', currentAnalyticsReport.source.label],
+        ['نوع التقرير', currentAnalyticsReport.mode === 'summary' ? 'إجمالي' : 'تفصيلي'],
+        ['الفترة', currentAnalyticsReport.yearLabel],
+        ['الوصف', currentAnalyticsReport.caption],
+        [],
+        currentAnalyticsReport.tableHeaders,
+        ...currentAnalyticsReport.tableRows
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = currentAnalyticsReport.tableHeaders.map((_, index) => ({
+        wch: index === 0 ? 28 : 20
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'الاستوديو الإحصائي');
+    XLSX.writeFile(wb, `${currentAnalyticsReport.filenameBase}.xlsx`);
+}
+
+function exportAnalyticsCSV() {
+    if (!currentAnalyticsReport) return;
+    downloadCSV(`${currentAnalyticsReport.filenameBase}.csv`, [
+        currentAnalyticsReport.tableHeaders,
+        ...currentAnalyticsReport.tableRows
+    ]);
 }
 
 // ========================================

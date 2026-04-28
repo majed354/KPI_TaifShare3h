@@ -71,6 +71,7 @@
             <button class="nav-btn" data-view="compare">المقارنة</button>
             <button class="nav-btn" data-view="graduates">سجل الخريجين</button>
             <button class="nav-btn" data-view="noncomplete">غير المكملين</button>
+            <button class="nav-btn" data-view="analytics">الاستوديو الإحصائي</button>
         </nav>
     </div>
 </header>
@@ -388,6 +389,107 @@
                     </thead>
                     <tbody id="nc-tbody"></tbody>
                 </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ الاستوديو الإحصائي ============ -->
+    <section id="analytics-view" class="view">
+        <div class="view-top">
+            <div>
+                <h2>📈 الاستوديو الإحصائي</h2>
+                <p class="view-desc">منصة مرنة لبناء تقارير شاملة من كل بيانات الموقع مع تجميعات وفلاتر دقيقة.</p>
+            </div>
+        </div>
+
+        <div class="card analytics-builder">
+            <div class="analytics-grid">
+                <div class="form-group">
+                    <label>نوع التقرير</label>
+                    <select id="analytics-mode">
+                        <option value="summary">إجمالي</option>
+                        <option value="detail">تفصيلي</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>مصدر البيانات</label>
+                    <select id="analytics-source"></select>
+                </div>
+                <div class="form-group">
+                    <label>من سنة</label>
+                    <select id="analytics-year-from"></select>
+                </div>
+                <div class="form-group">
+                    <label>إلى سنة</label>
+                    <select id="analytics-year-to"></select>
+                </div>
+                <div class="form-group">
+                    <label>التجميع الأساسي</label>
+                    <select id="analytics-group-primary"></select>
+                </div>
+                <div class="form-group">
+                    <label>التجميع الثانوي</label>
+                    <select id="analytics-group-secondary"></select>
+                </div>
+            </div>
+
+            <div class="form-group analytics-search-group">
+                <label>بحث نصي</label>
+                <input type="text" id="analytics-search" placeholder="ابحث بالاسم أو الرقم أو أي نص متاح في المصدر">
+            </div>
+
+            <div class="analytics-filter-shell">
+                <div class="analytics-filter-head">
+                    <h3>الفلاتر المتاحة</h3>
+                    <p id="analytics-filter-caption">تتغير الفلاتر تلقائيًا حسب مصدر البيانات الذي تختاره.</p>
+                </div>
+                <div class="analytics-grid" id="analytics-filters"></div>
+            </div>
+
+            <div class="analytics-filter-shell">
+                <div class="analytics-filter-head">
+                    <h3>الإحصاءات المطلوبة</h3>
+                    <p>يمكنك اختيار أكثر من إحصائية لتظهر معًا في نفس التقرير.</p>
+                </div>
+                <div class="analytics-metrics-grid" id="analytics-metrics"></div>
+            </div>
+
+            <div class="analytics-actions">
+                <button id="analytics-run" class="btn-primary" type="button">بناء التقرير</button>
+                <button id="analytics-reset" class="btn-sm" type="button">إعادة الضبط</button>
+            </div>
+        </div>
+
+        <div id="analytics-results" class="hidden">
+            <div id="analytics-export-area">
+                <div class="card">
+                    <div class="cmp-header">
+                        <div>
+                            <h3>نتائج التحليل</h3>
+                            <p id="analytics-caption" class="view-desc"></p>
+                        </div>
+                        <div class="export-btns">
+                            <button class="btn-sm" onclick="exportAnalyticsPDF()">PDF</button>
+                            <button class="btn-sm" onclick="exportAnalyticsExcel()">Excel</button>
+                            <button class="btn-sm" onclick="exportAnalyticsCSV()">CSV</button>
+                        </div>
+                    </div>
+                    <div id="analytics-summary" class="summary-row analytics-summary"></div>
+                </div>
+
+                <div class="chart-card analytics-chart-card">
+                    <h3>التمثيل البياني</h3>
+                    <div class="chart-wrap"><canvas id="analytics-chart"></canvas></div>
+                </div>
+
+                <div class="card">
+                    <div class="table-wrap">
+                        <table class="data-table" id="analytics-table">
+                            <thead id="analytics-thead"></thead>
+                            <tbody id="analytics-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
