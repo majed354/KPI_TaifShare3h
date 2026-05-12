@@ -16,6 +16,9 @@ const KPI_CONFIG = (typeof window !== 'undefined' && window.KPI_CONFIG) ? window
 const GRADUATES_SURVEY_SHEET_URL = String(KPI_CONFIG.graduatesSurveySheetUrl || '').trim();
 const GRADUATES_SURVEY_BACHELOR_SHEET_URL = String(KPI_CONFIG.graduatesSurveyBachelorSheetUrl || '').trim();
 const GRADUATES_SURVEY_POSTGRAD_SHEET_URL = String(KPI_CONFIG.graduatesSurveyPostgradSheetUrl || '').trim();
+const SHARI3AH_SURVEYS_DATA_URL = String(
+    KPI_CONFIG.shari3ahSurveysDataUrl || 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/surveys-data.js'
+).trim();
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
 const RESEARCH_KPI_EXCLUDED_RANKS = new Set(['معيد', 'محاضر', 'متعاون', 'مدرس']);
 const GRADUATE_PROGRAM_ALIASES = {
@@ -24,6 +27,24 @@ const GRADUATE_PROGRAM_ALIASES = {
     'الدراسات القرانيه': 'الدراسات القرآنية',
     'الانظمة': 'الأنظمة',
 };
+const SHARI3AH_SURVEYS_PROGRAM_ID_MAP = {
+    'الأنظمة|بكالوريوس': 'p01',
+    'الدراسات الإسلامية|بكالوريوس': 'p02',
+    'الشريعة|بكالوريوس': 'p03',
+    'القرآن وعلومه|بكالوريوس': 'p04',
+    'القراءات|بكالوريوس': 'p05',
+    'القانون|الماجستير': 'p06',
+    'العقيدة|الماجستير': 'p07',
+    'أصول الفقه|الماجستير': 'p08',
+    'الفقه|الماجستير': 'p09',
+    'الدراسات القرآنية المعاصرة|الماجستير': 'p10',
+    'القراءات|الماجستير': 'p11',
+    'أصول الفقه|دكتوراه': 'p12',
+    'الفقه|دكتوراه': 'p13',
+    'الدراسات القرآنية|دكتوراه': 'p14',
+    'القراءات|دكتوراه': 'p15',
+};
+const SHARI3AH_PROGRAM_EVAL_SURVEY_TITLE = 'استبانة تقويم برنامج';
 const INDICATORS_UG = [
     { id:1,  code:'KPI-1',  name:"تقويم الطلاب لجودة خبرات التعلم في البرنامج", unit:"درجة", key:"experience_eval", numeric:true },
     { id:2,  code:'KPI-2',  name:"تقييم الطلاب لجودة المقررات", unit:"درجة", key:"course_eval", numeric:true },
@@ -221,6 +242,24 @@ async function fetchJSONIfExists(url) {
         const res = await fetch(url);
         if (!res.ok) return null;
         return await res.json();
+    } catch {
+        return null;
+    }
+}
+
+function parseWindowAssignedJSON(text, windowVarName) {
+    const raw = String(text || '').trim().replace(/^\uFEFF/, '');
+    if (!raw) return null;
+    const prefix = `window.${windowVarName}`;
+    if (!raw.startsWith(prefix)) return null;
+
+    const equalsIndex = raw.indexOf('=');
+    if (equalsIndex === -1) return null;
+    const jsonText = raw.slice(equalsIndex + 1).trim().replace(/;$/, '').trim();
+    if (!jsonText) return null;
+
+    try {
+        return JSON.parse(jsonText);
     } catch {
         return null;
     }
@@ -437,6 +476,18 @@ function normalizeSurveyProgramName(name) {
         .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
+}
+
+function buildShari3ahSurveysProgramKey(programName, degreeName) {
+    const normalizedProgram = normalizeSurveyProgramName(programName);
+    const normalizedDegree = normalizeDegree(degreeName);
+    if (!normalizedProgram || !normalizedDegree) return '';
+    return `${normalizedProgram}|${normalizedDegree}`;
+}
+
+function getShari3ahSurveysProgramId(programName, degreeName) {
+    const key = buildShari3ahSurveysProgramKey(programName, degreeName);
+    return SHARI3AH_SURVEYS_PROGRAM_ID_MAP[key] || '';
 }
 
 function parseCSVQuotedRows(text, separator = ',') {
@@ -929,6 +980,107 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
         }
     });
     return { appliedRows, matchedGroups: matchedGroups.size };
+}
+
+function isShari3ahProgramEvaluationSurvey(title) {
+    return normalizeArabicText(title) === normalizeArabicText(SHARI3AH_PROGRAM_EVAL_SURVEY_TITLE);
+}
+
+function aggregateProgramExperienceMetricFromSurvey(survey) {
+    if (!survey || !Array.isArray(survey.topics)) return null;
+
+    let scoreTotal = 0;
+    let responseTotal = 0;
+    const itemResponseMap = new Map();
+
+    survey.topics.forEach(topic => {
+        (topic.items || []).forEach(item => {
+            const itemKey = [
+                normalizeArabicText(topic.label),
+                normalizeArabicText(item.number),
+                normalizeArabicText(item.label)
+            ].join('||');
+
+            let itemResponses = 0;
+            (item.genders || []).forEach(genderEntry => {
+                const responses = Number(genderEntry.responses || 0);
+                const weightedTotal = Number(genderEntry.scoreTotal || 0);
+                if (!Number.isFinite(responses) || responses <= 0) return;
+
+                itemResponses += responses;
+                responseTotal += responses;
+                scoreTotal += Number.isFinite(weightedTotal) ? weightedTotal : 0;
+            });
+
+            if (itemResponses > 0) {
+                itemResponseMap.set(itemKey, (itemResponseMap.get(itemKey) || 0) + itemResponses);
+            }
+        });
+    });
+
+    if (!responseTotal || !itemResponseMap.size) return null;
+
+    return {
+        eval_experience: Math.round((scoreTotal / responseTotal) * 100) / 100,
+        eval_experience_sample: Math.max(0, ...itemResponseMap.values())
+    };
+}
+
+function extractProgramExperienceMetricsFromShari3ahSurveys(payload) {
+    const extractedData = payload && payload.extractedData ? payload.extractedData : {};
+    const metricsByDatasetKey = {};
+
+    Object.entries(extractedData).forEach(([datasetKey, dataset]) => {
+        const survey = (dataset.surveys || []).find(item => isShari3ahProgramEvaluationSurvey(item.title));
+        if (!survey) return;
+
+        const metric = aggregateProgramExperienceMetricFromSurvey(survey);
+        if (!metric) return;
+        metricsByDatasetKey[datasetKey] = metric;
+    });
+
+    return metricsByDatasetKey;
+}
+
+async function applyProgramExperienceFromShari3ahSurveys(rows) {
+    if (!SHARI3AH_SURVEYS_DATA_URL) return { applied: false, reason: 'no-url' };
+
+    const requestUrl = `${SHARI3AH_SURVEYS_DATA_URL}${SHARI3AH_SURVEYS_DATA_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    const sourceText = await fetchTextIfExists(requestUrl);
+    if (!sourceText) return { applied: false, reason: 'unreachable-source' };
+
+    const payload = parseWindowAssignedJSON(sourceText, 'SURVEYS_DATA');
+    if (!payload || !payload.extractedData) return { applied: false, reason: 'invalid-payload' };
+
+    const metricsByDatasetKey = extractProgramExperienceMetricsFromShari3ahSurveys(payload);
+    const datasetKeys = Object.keys(metricsByDatasetKey);
+    if (!datasetKeys.length) return { applied: false, reason: 'no-program-evaluation-metrics' };
+
+    let appliedRows = 0;
+    const matchedDatasets = new Set();
+
+    rows.forEach(row => {
+        const programId = getShari3ahSurveysProgramId(row.Major_aName, row.Degree_aName);
+        if (!programId) return;
+
+        const datasetKey = `${programId}::${fmtYear(row.Semester)}`;
+        const metric = metricsByDatasetKey[datasetKey];
+        if (!metric) return;
+
+        row.eval_experience = metric.eval_experience;
+        row.eval_experience_sample = metric.eval_experience_sample || 0;
+        row.eval_experience_source = 'shari3ah_surveys_program_eval';
+        matchedDatasets.add(datasetKey);
+        appliedRows++;
+    });
+
+    return {
+        applied: appliedRows > 0,
+        appliedRows,
+        matchedDatasets: matchedDatasets.size,
+        availableDatasets: datasetKeys.length,
+        sourceFile: payload.sourceFile || ''
+    };
 }
 
 async function applyGraduateSurveyIndicatorsFromSheet(rows, rawUrl, allowedDegrees = null, sourceLabel = '') {
@@ -1497,6 +1649,7 @@ async function loadData() {
         allRows = parseCSV(csv);
         const durationInfo = await applyAverageGraduationDurationFromDetails(allRows);
         const surveyInfo = await applyGraduateSurveyIndicators(allRows);
+        const experienceInfo = await applyProgramExperienceFromShari3ahSurveys(allRows);
         const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
@@ -1505,6 +1658,7 @@ async function loadData() {
             rows: allRows.length,
             durationInfo,
             surveyInfo,
+            experienceInfo,
             researchInfo,
             fteInfo,
         });
