@@ -71,6 +71,7 @@
             <button class="nav-btn" data-view="compare">المقارنة</button>
             <button class="nav-btn" data-view="graduates">سجل الخريجين</button>
             <button class="nav-btn" data-view="noncomplete">غير المكملين</button>
+            <button class="nav-btn" data-view="student-categories">فئات الطلاب</button>
             <button class="nav-btn" data-view="analytics">الاستوديو الإحصائي</button>
         </nav>
     </div>
@@ -389,6 +390,138 @@
                     </thead>
                     <tbody id="nc-tbody"></tbody>
                 </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ فئات الطلاب ============ -->
+    <section id="student-categories-view" class="view">
+        <div class="view-top">
+            <div>
+                <h2>🎯 فئات الطلاب</h2>
+                <p class="view-desc">تصنيف طلاب البرنامج وفق السلم الرباعي الرسمي لجامعة الطائف، مع نسب دقيقة وتصدير مباشر.</p>
+            </div>
+        </div>
+
+        <div class="card student-categories-builder">
+            <div class="analytics-grid">
+                <div class="form-group">
+                    <label>السنة</label>
+                    <select id="student-cat-year"></select>
+                </div>
+                <div class="form-group">
+                    <label>القسم</label>
+                    <select id="student-cat-dept"></select>
+                </div>
+                <div class="form-group">
+                    <label>الدرجة</label>
+                    <select id="student-cat-degree"></select>
+                </div>
+                <div class="form-group">
+                    <label>البرنامج</label>
+                    <select id="student-cat-prog"></select>
+                </div>
+                <div class="form-group">
+                    <label>الحالة</label>
+                    <select id="student-cat-status"></select>
+                </div>
+                <div class="form-group">
+                    <label>الجنس</label>
+                    <select id="student-cat-gender"></select>
+                </div>
+            </div>
+
+            <div class="form-group analytics-search-group">
+                <label>بحث اختياري بالاسم أو الرقم</label>
+                <input type="text" id="student-cat-search" placeholder="اكتب اسم الطالب أو الرقم الجامعي إن احتجت لتضييق التقرير">
+            </div>
+
+            <div class="student-category-shell">
+                <div class="analytics-filter-head">
+                    <div>
+                        <h3>الفئات المطلوبة</h3>
+                        <p>المتفوقون = ممتاز (3.50 فأعلى) | المجتهدون = جيد جدًا مرتفع (3.25 إلى أقل من 3.50)</p>
+                    </div>
+                    <p>الضعفاء = أكبر من 1 وأقل من 2 | المتعثرون = 1 فأقل</p>
+                </div>
+                <div id="student-category-picks" class="student-category-picks"></div>
+                <div class="student-category-actions">
+                    <button id="student-cat-select-all" class="btn-sm" type="button">تحديد الكل</button>
+                    <button id="student-cat-clear-all" class="btn-sm" type="button">إلغاء الكل</button>
+                </div>
+            </div>
+
+            <p class="student-category-note">
+                النسبة تحسب من إجمالي السجلات بعد تطبيق الفلاتر. ويمكنك اختيار حالة محددة مثل المنتظمين فقط إذا أردت قراءة أدق لمحكات الدعم والرعاية.
+            </p>
+
+            <div class="analytics-actions">
+                <button id="student-cat-run" class="btn-primary" type="button">تحديث التقرير</button>
+                <button id="student-cat-reset" class="btn-sm" type="button">إعادة الضبط</button>
+            </div>
+        </div>
+
+        <div id="student-cat-results" class="hidden">
+            <div id="student-cat-export-area">
+                <div class="card">
+                    <div class="cmp-header">
+                        <div>
+                            <h3>نتائج فئات الطلاب</h3>
+                            <p id="student-cat-caption" class="view-desc"></p>
+                        </div>
+                        <div class="export-btns">
+                            <button class="btn-sm" onclick="exportStudentCategoriesPDF()">PDF</button>
+                            <button class="btn-sm" onclick="exportStudentCategoriesExcel()">Excel</button>
+                            <button class="btn-sm" onclick="exportStudentCategoriesCSV()">CSV</button>
+                        </div>
+                    </div>
+                    <div id="student-cat-summary" class="summary-row student-category-summary"></div>
+                </div>
+
+                <div class="charts-grid student-category-insights">
+                    <div class="chart-card">
+                        <h3>توزيع الفئات المختارة</h3>
+                        <div class="chart-wrap">
+                            <canvas id="student-cat-chart"></canvas>
+                            <div id="student-cat-chart-empty" class="analytics-empty hidden">لا توجد سجلات مطابقة للفئات المختارة في هذه التصفية.</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3>ملخص الفئات</h3>
+                        <div class="table-wrap">
+                            <table class="data-table" id="student-cat-summary-table">
+                                <thead id="student-cat-summary-thead"></thead>
+                                <tbody id="student-cat-summary-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>التفاصيل المطابقة</h3>
+                    <div class="table-wrap">
+                        <table class="data-table records-table" id="student-cat-detail-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>السنة</th>
+                                    <th>الرقم الجامعي</th>
+                                    <th>الاسم</th>
+                                    <th>البرنامج</th>
+                                    <th>الدرجة</th>
+                                    <th>القسم</th>
+                                    <th>الحالة</th>
+                                    <th>الجنس</th>
+                                    <th>المعدل</th>
+                                    <th>التقدير الرسمي</th>
+                                    <th>الفئة</th>
+                                </tr>
+                            </thead>
+                            <tbody id="student-cat-detail-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </section>

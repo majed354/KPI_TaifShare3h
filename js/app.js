@@ -86,6 +86,41 @@ const SURVEY_DEPT_FALLBACK_RULES = {
     'الأنظمة': 'single_program_per_degree',
     'الدراسات الإسلامية': 'single_program_per_degree',
 };
+const STUDENT_CATEGORY_DEFS = [
+    {
+        id: 'excellent',
+        label: 'المتفوقون',
+        shortLabel: 'متفوقون',
+        rangeLabel: 'ممتاز: 3.50 إلى 4.00',
+        accent: '#0d8e8e',
+        matches: gpa => gpa >= 3.5
+    },
+    {
+        id: 'diligent',
+        label: 'المجتهدون',
+        shortLabel: 'مجتهدون',
+        rangeLabel: 'جيد جدًا مرتفع: 3.25 إلى أقل من 3.50',
+        accent: '#c9a227',
+        matches: gpa => gpa >= 3.25 && gpa < 3.5
+    },
+    {
+        id: 'weak',
+        label: 'الضعفاء',
+        shortLabel: 'ضعفاء',
+        rangeLabel: 'أكبر من 1.00 وأقل من 2.00',
+        accent: '#f97316',
+        matches: gpa => gpa > 1 && gpa < 2
+    },
+    {
+        id: 'struggling',
+        label: 'المتعثرون',
+        shortLabel: 'متعثرون',
+        rangeLabel: '1.00 فأقل',
+        accent: '#dc2626',
+        matches: gpa => gpa <= 1
+    },
+];
+const STUDENT_CATEGORY_DEFAULT_IDS = STUDENT_CATEGORY_DEFS.map(category => category.id);
 
 // ========================================
 // البيانات
@@ -97,11 +132,14 @@ let currentProg = null;// for export
 let compareThirdEnabled = false;
 let gradData = [];     // graduate records
 let ncData = [];       // non-completer records
+let studentDetailData = [];
 let appBootstrapped = false;
 let appBootPromise = null;
 let loginMembersById = null;
 let analyticsChart = null;
 let currentAnalyticsReport = null;
+let studentCategoryChart = null;
+let currentStudentCategoryReport = null;
 
 const SUPPORTED_KPI_DEGREES = new Set(['بكالوريوس','الماجستير','دكتوراه']);
 const RANK_ALLOWED_DEGREES = {
@@ -354,9 +392,10 @@ async function startApp() {
         initCompare();
 
         updateLoadingMessage('جاري تحميل السجلات التفصيلية...');
-        await Promise.all([loadGraduates(), loadNonCompleters()]);
+        await Promise.all([loadGraduates(), loadNonCompleters(), loadStudentDetails()]);
         initGraduatesView();
         initNonCompleteView();
+        initStudentCategoriesView();
         initAnalyticsView();
 
         appBootstrapped = true;
@@ -476,6 +515,25 @@ function normalizeSurveyProgramName(name) {
         .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
+}
+
+function getStudentCategoryDefinition(categoryId) {
+    return STUDENT_CATEGORY_DEFS.find(category => category.id === categoryId) || null;
+}
+
+function classifyStudentCategoryId(gpa) {
+    if (!Number.isFinite(gpa)) return '';
+    const match = STUDENT_CATEGORY_DEFS.find(category => category.matches(gpa));
+    return match ? match.id : '';
+}
+
+function getOfficialGpaEstimate(gpa) {
+    if (!Number.isFinite(gpa)) return 'غير محدد';
+    if (gpa >= 3.5) return 'ممتاز';
+    if (gpa >= 2.75) return 'جيد جدًا';
+    if (gpa >= 1.75) return 'جيد';
+    if (gpa >= 1) return 'مقبول';
+    return 'أقل من مقبول';
 }
 
 function buildShari3ahSurveysProgramKey(programName, degreeName) {
@@ -2639,6 +2697,46 @@ async function loadNonCompleters() {
     }
 }
 
+async function loadStudentDetails() {
+    try {
+        const res = await fetch('data/students_detail.csv?t=' + Date.now());
+        const csv = await res.text();
+        studentDetailData = parseDetailCSV(csv).map(row => {
+            const normalizedProgram = normalizeSurveyProgramName(row['التخصص'] || '');
+            const normalizedDegree = normalizeDegree(row['الدرجة'] || '');
+            const normalizedDept = normalizeDepartment(row['القسم'] || '');
+            const gpa = analyticsParseGPA(row['المعدل']);
+            const categoryId = classifyStudentCategoryId(gpa);
+            const searchText = normalizeArabicText([
+                row['السنة'],
+                row['الرقم_الجامعي'],
+                row['الاسم'],
+                normalizedProgram,
+                normalizedDegree,
+                normalizedDept,
+                row['الحالة'],
+                row['الجنس'],
+                row['الجنسية']
+            ].join(' ')).toLowerCase();
+            return {
+                ...row,
+                'التخصص': normalizedProgram,
+                'الدرجة': normalizedDegree,
+                'القسم': normalizedDept,
+                _year: parseInt(row['السنة'], 10) || 0,
+                _gpa: gpa,
+                _categoryId: categoryId,
+                _officialEstimate: getOfficialGpaEstimate(gpa),
+                _searchText: searchText
+            };
+        });
+        return true;
+    } catch (e) {
+        console.error('خطأ في تحميل بيانات الطلاب التفصيلية:', e);
+        return false;
+    }
+}
+
 function initGraduatesView() {
     if (!gradData.length) return;
 
@@ -2854,6 +2952,511 @@ function exportNCExcel() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'غير المكملين');
     XLSX.writeFile(wb, `غير-المكملين${statusFilter ? '-'+statusFilter : ''}.xlsx`);
+}
+
+// ========================================
+// فئات الطلاب
+// ========================================
+function setSelectOptions(selectElement, options, placeholder = 'الكل', currentValue = '') {
+    if (!selectElement) return;
+    const previous = currentValue || selectElement.value || '';
+    selectElement.innerHTML = `<option value="">${placeholder}</option>` +
+        options.map(option => `<option value="${option.value}">${option.label}</option>`).join('');
+
+    const exists = options.some(option => option.value === previous);
+    selectElement.value = exists ? previous : '';
+}
+
+function buildStudentCategoryLabel(row) {
+    const category = getStudentCategoryDefinition(row._categoryId);
+    return category ? category.label : 'خارج الفئات المحددة';
+}
+
+function getSelectedStudentCategoryIds() {
+    return [...document.querySelectorAll('#student-category-picks input[type="checkbox"]:checked')]
+        .map(input => input.value)
+        .filter(Boolean);
+}
+
+function renderStudentCategoryChoices() {
+    const wrap = document.getElementById('student-category-picks');
+    if (!wrap) return;
+    wrap.innerHTML = STUDENT_CATEGORY_DEFS.map(category => `
+        <label class="student-category-chip is-checked" data-category-id="${category.id}">
+            <input type="checkbox" value="${category.id}" checked>
+            <span class="student-category-chip-body">
+                <span class="student-category-chip-title">${category.label}</span>
+                <span class="student-category-chip-meta">${category.rangeLabel}</span>
+            </span>
+        </label>
+    `).join('');
+
+    wrap.querySelectorAll('input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', () => {
+            input.closest('.student-category-chip')?.classList.toggle('is-checked', input.checked);
+            document.getElementById('student-cat-results')?.classList.add('hidden');
+        });
+    });
+}
+
+function refreshStudentCategoryProgramOptions() {
+    const year = document.getElementById('student-cat-year')?.value || '';
+    const dept = document.getElementById('student-cat-dept')?.value || '';
+    const degree = document.getElementById('student-cat-degree')?.value || '';
+    const programSelect = document.getElementById('student-cat-prog');
+    if (!programSelect) return;
+
+    let rows = studentDetailData;
+    if (year) rows = rows.filter(row => String(row['السنة']) === year);
+    if (dept) rows = rows.filter(row => row['القسم'] === dept);
+    if (degree) rows = rows.filter(row => row['الدرجة'] === degree);
+
+    const options = [...new Set(rows.map(row => row['التخصص']).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'))
+        .map(value => ({ value, label: value }));
+
+    setSelectOptions(programSelect, options, 'كل البرامج');
+}
+
+function refreshStudentCategoryBaseFilters() {
+    const yearSelect = document.getElementById('student-cat-year');
+    const deptSelect = document.getElementById('student-cat-dept');
+    const degreeSelect = document.getElementById('student-cat-degree');
+    const statusSelect = document.getElementById('student-cat-status');
+    const genderSelect = document.getElementById('student-cat-gender');
+
+    const years = [...new Set(studentDetailData.map(row => String(row['السنة'])).filter(Boolean))]
+        .sort((a, b) => Number(a) - Number(b))
+        .map(value => ({ value, label: fmtYear(value) }));
+    const departments = [...new Set(studentDetailData.map(row => row['القسم']).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'))
+        .map(value => ({ value, label: value }));
+    const degrees = [...new Set(studentDetailData.map(row => row['الدرجة']).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'))
+        .map(value => ({ value, label: value }));
+    const statuses = [...new Set(studentDetailData.map(row => row['الحالة']).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'))
+        .map(value => ({ value, label: value }));
+    const genders = [...new Set(studentDetailData.map(row => row['الجنس']).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'))
+        .map(value => ({ value, label: value }));
+
+    setSelectOptions(yearSelect, years, 'كل السنوات');
+    setSelectOptions(deptSelect, departments, 'كل الأقسام');
+    setSelectOptions(degreeSelect, degrees, 'كل الدرجات');
+    setSelectOptions(statusSelect, statuses, 'كل الحالات');
+    setSelectOptions(genderSelect, genders, 'الكل');
+    refreshStudentCategoryProgramOptions();
+}
+
+function resetStudentCategoriesView() {
+    const yearSelect = document.getElementById('student-cat-year');
+    const deptSelect = document.getElementById('student-cat-dept');
+    const degreeSelect = document.getElementById('student-cat-degree');
+    const programSelect = document.getElementById('student-cat-prog');
+    const statusSelect = document.getElementById('student-cat-status');
+    const genderSelect = document.getElementById('student-cat-gender');
+    const searchInput = document.getElementById('student-cat-search');
+
+    const latestYear = Math.max(...studentDetailData.map(row => Number(row['السنة']) || 0));
+    if (yearSelect) yearSelect.value = latestYear ? String(latestYear) : '';
+    if (deptSelect) deptSelect.value = '';
+    if (degreeSelect) degreeSelect.value = '';
+    refreshStudentCategoryProgramOptions();
+    if (programSelect) programSelect.value = '';
+    if (statusSelect) statusSelect.value = '';
+    if (genderSelect) genderSelect.value = '';
+    if (searchInput) searchInput.value = '';
+
+    document.querySelectorAll('#student-category-picks input[type="checkbox"]').forEach(input => {
+        input.checked = true;
+        input.closest('.student-category-chip')?.classList.add('is-checked');
+    });
+}
+
+function getStudentCategoryFilteredRows() {
+    const year = document.getElementById('student-cat-year')?.value || '';
+    const dept = document.getElementById('student-cat-dept')?.value || '';
+    const degree = document.getElementById('student-cat-degree')?.value || '';
+    const program = document.getElementById('student-cat-prog')?.value || '';
+    const status = document.getElementById('student-cat-status')?.value || '';
+    const gender = document.getElementById('student-cat-gender')?.value || '';
+    const search = normalizeArabicText(document.getElementById('student-cat-search')?.value || '').toLowerCase();
+
+    let rows = studentDetailData;
+    if (year) rows = rows.filter(row => String(row['السنة']) === year);
+    if (dept) rows = rows.filter(row => row['القسم'] === dept);
+    if (degree) rows = rows.filter(row => row['الدرجة'] === degree);
+    if (program) rows = rows.filter(row => row['التخصص'] === program);
+    if (status) rows = rows.filter(row => row['الحالة'] === status);
+    if (gender) rows = rows.filter(row => row['الجنس'] === gender);
+    if (search) rows = rows.filter(row => row._searchText.includes(search));
+    return rows;
+}
+
+function buildStudentCategoryCaption(totalRows) {
+    const labels = [];
+    const year = document.getElementById('student-cat-year')?.value || '';
+    const dept = document.getElementById('student-cat-dept')?.value || '';
+    const degree = document.getElementById('student-cat-degree')?.value || '';
+    const program = document.getElementById('student-cat-prog')?.value || '';
+    const status = document.getElementById('student-cat-status')?.value || '';
+    const gender = document.getElementById('student-cat-gender')?.value || '';
+    const search = String(document.getElementById('student-cat-search')?.value || '').trim();
+
+    if (year) labels.push(`سنة ${fmtYear(year)}`);
+    if (dept) labels.push(`القسم: ${dept}`);
+    if (degree) labels.push(`الدرجة: ${degree}`);
+    if (program) labels.push(`البرنامج: ${program}`);
+    if (status) labels.push(`الحالة: ${status}`);
+    if (gender) labels.push(`الجنس: ${gender}`);
+    if (search) labels.push(`البحث: ${search}`);
+
+    const contextText = labels.length ? labels.join(' | ') : 'كل السجلات المتاحة';
+    return `تحليل ${fmtNum(totalRows)} سجلًا بعد الفلاتر. النسبة = عدد الفئة ÷ إجمالي السجلات بعد الفلاتر. ${contextText}`;
+}
+
+function buildStudentCategoryReport() {
+    const selectedCategoryIds = getSelectedStudentCategoryIds();
+    if (!selectedCategoryIds.length) {
+        alert('حدد فئة واحدة على الأقل لبناء التقرير.');
+        return null;
+    }
+
+    const filteredRows = getStudentCategoryFilteredRows();
+    const selectedDefs = STUDENT_CATEGORY_DEFS.filter(category => selectedCategoryIds.includes(category.id));
+    const totalRows = filteredRows.length;
+    const averageGpa = analyticsAverage(filteredRows, row => row._gpa);
+
+    const summaryRows = selectedDefs.map(category => {
+        const matches = filteredRows
+            .filter(row => row._categoryId === category.id)
+            .sort((a, b) => (b._gpa || -1) - (a._gpa || -1));
+        const count = matches.length;
+        const percentage = totalRows > 0 ? Math.round((count / totalRows) * 1000) / 10 : 0;
+        const average = analyticsAverage(matches, row => row._gpa);
+        return {
+            id: category.id,
+            label: category.label,
+            rangeLabel: category.rangeLabel,
+            accent: category.accent,
+            count,
+            percentage,
+            average,
+            highest: matches.length ? matches[0]._gpa : null,
+            lowest: matches.length ? matches[matches.length - 1]._gpa : null,
+            matches
+        };
+    });
+
+    const detailRowsSource = summaryRows
+        .flatMap(summary => summary.matches.map(row => ({ ...row, _reportCategory: summary.label })))
+        .sort((a, b) => {
+            const aIdx = selectedCategoryIds.indexOf(a._categoryId);
+            const bIdx = selectedCategoryIds.indexOf(b._categoryId);
+            if (aIdx !== bIdx) return aIdx - bIdx;
+            if ((b._gpa || -1) !== (a._gpa || -1)) return (b._gpa || -1) - (a._gpa || -1);
+            return String(a['الاسم'] || '').localeCompare(String(b['الاسم'] || ''), 'ar');
+        });
+    const matchedRowsCount = detailRowsSource.length;
+    const outsideCount = Math.max(0, totalRows - matchedRowsCount);
+
+    const summaryHeaders = ['الفئة', 'النطاق المعتمد', 'العدد', 'النسبة', 'متوسط المعدل', 'أعلى معدل', 'أقل معدل'];
+    const summaryTableRows = summaryRows.map(summary => [
+        summary.label,
+        summary.rangeLabel,
+        fmtNum(summary.count),
+        `${fmtNumFlex(summary.percentage, 1)}%`,
+        summary.average == null ? '—' : fmtNumFlex(summary.average, 2),
+        summary.highest == null ? '—' : fmtNumFlex(summary.highest, 2),
+        summary.lowest == null ? '—' : fmtNumFlex(summary.lowest, 2)
+    ]);
+
+    const detailHeaders = ['السنة', 'الرقم الجامعي', 'الاسم', 'البرنامج', 'الدرجة', 'القسم', 'الحالة', 'الجنس', 'المعدل', 'التقدير الرسمي', 'الفئة', 'مصدر الملف'];
+    const detailRows = detailRowsSource.map(row => [
+        fmtYear(row['السنة']),
+        row['الرقم_الجامعي'],
+        row['الاسم'],
+        row['التخصص'],
+        row['الدرجة'],
+        row['القسم'],
+        row['الحالة'],
+        row['الجنس'],
+        row['المعدل'],
+        row._officialEstimate,
+        row._reportCategory,
+        row['مصدر_الملف']
+    ]);
+
+    const filenameParts = [
+        'فئات-الطلاب',
+        document.getElementById('student-cat-year')?.value ? fmtYear(document.getElementById('student-cat-year').value) : 'كل-السنوات',
+        document.getElementById('student-cat-prog')?.value || document.getElementById('student-cat-dept')?.value || 'كل-البرامج'
+    ];
+
+    return {
+        totalRows,
+        averageGpa,
+        matchedRowsCount,
+        outsideCount,
+        caption: `${buildStudentCategoryCaption(totalRows)} الفئات المختارة تغطي ${fmtNum(matchedRowsCount)} سجلًا وتترك ${fmtNum(outsideCount)} سجلًا خارج التصنيف التشغيلي.`,
+        summaries: summaryRows,
+        detailRowsSource,
+        summaryHeaders,
+        summaryTableRows,
+        detailHeaders,
+        detailRows,
+        filenameBase: safeFileName(filenameParts.join('-'))
+    };
+}
+
+function renderStudentCategorySummary(report) {
+    const wrap = document.getElementById('student-cat-summary');
+    if (!wrap) return;
+
+    const baseCards = [
+        {
+            icon: '🧾',
+            label: 'إجمالي السجلات بعد الفلاتر',
+            value: fmtNum(report.totalRows),
+            note: 'الأساس الذي تحسب منه النسب'
+        },
+        {
+            icon: '📊',
+            label: 'متوسط المعدل',
+            value: report.averageGpa == null ? '—' : fmtNumFlex(report.averageGpa, 2),
+            note: 'على السلم الرباعي الرسمي'
+        },
+        {
+            icon: '🧭',
+            label: 'خارج الفئات المختارة',
+            value: fmtNum(report.outsideCount),
+            note: `${report.totalRows > 0 ? fmtNumFlex((report.outsideCount / report.totalRows) * 100, 1) : '0.0'}% من السجلات`
+        }
+    ];
+
+    const categoryCards = report.summaries.map(summary => ({
+        icon: '🎯',
+        label: summary.label,
+        value: fmtNum(summary.count),
+        note: `${fmtNumFlex(summary.percentage, 1)}% من السجلات`
+    }));
+
+    wrap.innerHTML = [...baseCards, ...categoryCards].map(card => `
+        <div class="summary-card student-category-card">
+            <div class="sc-icon">${card.icon}</div>
+            <div class="sc-value">${card.value}</div>
+            <div class="sc-label">${card.label}</div>
+            <div class="student-category-card-note">${card.note}</div>
+        </div>
+    `).join('');
+}
+
+function renderStudentCategorySummaryTable(report) {
+    const thead = document.getElementById('student-cat-summary-thead');
+    const tbody = document.getElementById('student-cat-summary-tbody');
+    if (!thead || !tbody) return;
+
+    thead.innerHTML = `<tr>${report.summaryHeaders.map(header => `<th>${header}</th>`).join('')}</tr>`;
+    tbody.innerHTML = report.summaryTableRows.map((row, index) => `
+        <tr class="${index % 2 ? 'alt' : ''}">
+            ${row.map(cell => `<td>${cell}</td>`).join('')}
+        </tr>
+    `).join('');
+}
+
+function renderStudentCategoryDetailTable(report) {
+    const tbody = document.getElementById('student-cat-detail-tbody');
+    if (!tbody) return;
+
+    const MAX_SHOW = 500;
+    const showing = report.detailRowsSource.slice(0, MAX_SHOW);
+
+    tbody.innerHTML = showing.map((row, index) => `
+        <tr class="${index % 2 ? 'alt' : ''}">
+            <td>${index + 1}</td>
+            <td>${fmtYear(row['السنة'])}</td>
+            <td>${row['الرقم_الجامعي']}</td>
+            <td>${row['الاسم']}</td>
+            <td>${row['التخصص']}</td>
+            <td>${row['الدرجة']}</td>
+            <td>${row['القسم']}</td>
+            <td>${row['الحالة']}</td>
+            <td>${row['الجنس']}</td>
+            <td>${row['المعدل']}</td>
+            <td>${row._officialEstimate}</td>
+            <td>${row._reportCategory}</td>
+        </tr>
+    `).join('');
+
+    if (report.detailRowsSource.length > MAX_SHOW) {
+        tbody.innerHTML += `<tr><td colspan="12" style="text-align:center;color:var(--text-light);padding:16px">
+            يتم عرض أول ${MAX_SHOW} سجل فقط داخل الصفحة. التصدير يشمل جميع السجلات المطابقة.
+        </td></tr>`;
+    }
+}
+
+function renderStudentCategoryChart(report) {
+    if (studentCategoryChart) {
+        studentCategoryChart.destroy();
+        studentCategoryChart = null;
+    }
+
+    const canvas = document.getElementById('student-cat-chart');
+    const empty = document.getElementById('student-cat-chart-empty');
+    if (!canvas || !empty) return;
+
+    if (!report.summaries.length || report.summaries.every(summary => summary.count === 0)) {
+        canvas.classList.add('hidden');
+        empty.classList.remove('hidden');
+        return;
+    }
+
+    canvas.classList.remove('hidden');
+    empty.classList.add('hidden');
+
+    studentCategoryChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: report.summaries.map(summary => summary.label),
+            datasets: [{
+                label: 'عدد الطلاب',
+                data: report.summaries.map(summary => summary.count),
+                backgroundColor: report.summaries.map(summary => summary.accent),
+                borderRadius: 8
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: context => {
+                            const summary = report.summaries[context.dataIndex];
+                            return `${fmtNum(summary.count)} طالب (${fmtNumFlex(summary.percentage, 1)}%)`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { font: { family: 'Tajawal' } } },
+                y: {
+                    beginAtZero: true,
+                    ticks: { font: { family: 'Tajawal' }, precision: 0 },
+                    grid: { color: '#eef2f7' }
+                }
+            }
+        }
+    });
+}
+
+function renderStudentCategoriesReport(scrollToResults = true) {
+    const report = buildStudentCategoryReport();
+    if (!report) return;
+
+    currentStudentCategoryReport = report;
+    document.getElementById('student-cat-caption').textContent = report.caption;
+
+    renderStudentCategorySummary(report);
+    renderStudentCategorySummaryTable(report);
+    renderStudentCategoryDetailTable(report);
+    renderStudentCategoryChart(report);
+
+    document.getElementById('student-cat-results').classList.remove('hidden');
+    if (scrollToResults) {
+        document.getElementById('student-cat-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+function initStudentCategoriesView() {
+    if (!studentDetailData.length) return;
+
+    renderStudentCategoryChoices();
+    refreshStudentCategoryBaseFilters();
+    resetStudentCategoriesView();
+
+    ['student-cat-year', 'student-cat-dept', 'student-cat-degree'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', () => {
+            refreshStudentCategoryProgramOptions();
+            document.getElementById('student-cat-results')?.classList.add('hidden');
+        });
+    });
+
+    ['student-cat-prog', 'student-cat-status', 'student-cat-gender'].forEach(id => {
+        document.getElementById(id)?.addEventListener('change', () => {
+            document.getElementById('student-cat-results')?.classList.add('hidden');
+        });
+    });
+
+    document.getElementById('student-cat-search')?.addEventListener('input', () => {
+        document.getElementById('student-cat-results')?.classList.add('hidden');
+    });
+
+    document.getElementById('student-cat-select-all')?.addEventListener('click', () => {
+        document.querySelectorAll('#student-category-picks input[type="checkbox"]').forEach(input => {
+            input.checked = true;
+            input.closest('.student-category-chip')?.classList.add('is-checked');
+        });
+        document.getElementById('student-cat-results')?.classList.add('hidden');
+    });
+
+    document.getElementById('student-cat-clear-all')?.addEventListener('click', () => {
+        document.querySelectorAll('#student-category-picks input[type="checkbox"]').forEach(input => {
+            input.checked = false;
+            input.closest('.student-category-chip')?.classList.remove('is-checked');
+        });
+        document.getElementById('student-cat-results')?.classList.add('hidden');
+    });
+
+    document.getElementById('student-cat-run')?.addEventListener('click', () => renderStudentCategoriesReport(true));
+    document.getElementById('student-cat-reset')?.addEventListener('click', () => {
+        resetStudentCategoriesView();
+        renderStudentCategoriesReport(true);
+    });
+
+    renderStudentCategoriesReport(false);
+}
+
+async function exportStudentCategoriesPDF() {
+    if (!currentStudentCategoryReport) return;
+    await exportSectionAsPDF('student-cat-export-area', `${currentStudentCategoryReport.filenameBase}.pdf`);
+}
+
+function exportStudentCategoriesExcel() {
+    if (!currentStudentCategoryReport) return;
+
+    const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['فئات الطلاب'],
+        ['الوصف', currentStudentCategoryReport.caption],
+        [],
+        currentStudentCategoryReport.summaryHeaders,
+        ...currentStudentCategoryReport.summaryTableRows
+    ]);
+    const detailSheet = XLSX.utils.aoa_to_sheet([
+        currentStudentCategoryReport.detailHeaders,
+        ...currentStudentCategoryReport.detailRows
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'ملخص الفئات');
+    XLSX.utils.book_append_sheet(wb, detailSheet, 'التفاصيل');
+    XLSX.writeFile(wb, `${currentStudentCategoryReport.filenameBase}.xlsx`);
+}
+
+function exportStudentCategoriesCSV() {
+    if (!currentStudentCategoryReport) return;
+    downloadCSV(`${currentStudentCategoryReport.filenameBase}.csv`, [
+        ['فئات الطلاب'],
+        ['الوصف', currentStudentCategoryReport.caption],
+        [],
+        currentStudentCategoryReport.summaryHeaders,
+        ...currentStudentCategoryReport.summaryTableRows,
+        [],
+        currentStudentCategoryReport.detailHeaders,
+        ...currentStudentCategoryReport.detailRows
+    ]);
 }
 
 // ========================================

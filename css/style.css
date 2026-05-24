@@ -805,6 +805,91 @@ body.app-blocked { overflow: hidden; }
 }
 
 /* ============================
+   فئات الطلاب
+   ============================ */
+.student-categories-builder {
+    margin-bottom: 16px;
+}
+.student-category-shell {
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+}
+.student-category-picks {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+.student-category-chip {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 15px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #fbfcfe;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.student-category-chip:hover {
+    border-color: rgba(13,110,110,0.35);
+    box-shadow: 0 6px 16px rgba(13,110,110,0.08);
+}
+.student-category-chip.is-checked {
+    border-color: rgba(13,110,110,0.45);
+    background: linear-gradient(135deg, rgba(13,110,110,0.08), rgba(201,162,39,0.08));
+}
+.student-category-chip input {
+    margin-top: 2px;
+    accent-color: var(--primary);
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+.student-category-chip-body {
+    min-width: 0;
+}
+.student-category-chip-title {
+    display: block;
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.student-category-chip-meta {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.76rem;
+    color: var(--text-light);
+}
+.student-category-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+.student-category-note {
+    margin-top: 14px;
+    color: var(--text-light);
+    font-size: 0.84rem;
+    line-height: 1.8;
+}
+.student-category-summary .summary-card {
+    text-align: right;
+}
+.student-category-card-note {
+    margin-top: 4px;
+    font-size: 0.74rem;
+    color: var(--text-light);
+}
+.student-category-insights {
+    align-items: start;
+}
+#student-cat-summary-table td:first-child,
+#student-cat-detail-table td:last-child {
+    font-weight: 700;
+}
+
+/* ============================
    التذييل
    ============================ */
 .footer {
@@ -949,6 +1034,7 @@ body.app-blocked { overflow: hidden; }
     .login-box { padding: 24px 20px 20px; border-radius: 18px; }
     .auth-badge { width: 100%; justify-content: space-between; }
     .analytics-metrics-grid { grid-template-columns: 1fr; }
+    .student-category-picks { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
     .summary-row { grid-template-columns: 1fr; }
