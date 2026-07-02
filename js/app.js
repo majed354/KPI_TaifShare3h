@@ -583,6 +583,31 @@ function classifyFacultyGender(value) {
     return 'unknown';
 }
 
+function classifyStudentNationality(value) {
+    const normalized = normalizeArabicText(value);
+    if (!normalized) return 'unknown';
+    if (
+        normalized === 'سعودي' ||
+        normalized === 'سعودية' ||
+        normalized === 'السعودي' ||
+        normalized === 'السعودية'
+    ) {
+        return 'saudi';
+    }
+    if (normalized.includes('غير سعودي')) {
+        return 'nonSaudi';
+    }
+    return 'nonSaudi';
+}
+
+function classifyStudentGender(value) {
+    const normalized = normalizeArabicText(value);
+    if (!normalized) return 'unknown';
+    if (normalized.includes('ذكر')) return 'male';
+    if (normalized.includes('أنث') || normalized.includes('انث')) return 'female';
+    return 'unknown';
+}
+
 function createFacultyRankAggregate() {
     return {
         count: 0,
@@ -2529,15 +2554,15 @@ function buildStudySystemBreakdown(detailRows, dataRow) {
     const remote = createStudySystemBucket();
 
     const applyCounts = (bucket, rows) => {
-        const saudiRows = rows.filter(row => normalizeArabicText(row['الجنسية']).includes('سعود'));
-        const nonSaudiRows = rows.filter(row => !normalizeArabicText(row['الجنسية']).includes('سعود'));
-        const countGender = (subset, marker) => subset.filter(row => normalizeArabicText(row['الجنس']).includes(marker)).length;
+        const saudiRows = rows.filter(row => classifyStudentNationality(row['الجنسية']) === 'saudi');
+        const nonSaudiRows = rows.filter(row => classifyStudentNationality(row['الجنسية']) === 'nonSaudi');
+        const countGender = (subset, group) => subset.filter(row => classifyStudentGender(row['الجنس']) === group).length;
 
-        bucket.saudiMale = countGender(saudiRows, 'ذكر');
-        bucket.saudiFemale = countGender(saudiRows, 'أنث');
+        bucket.saudiMale = countGender(saudiRows, 'male');
+        bucket.saudiFemale = countGender(saudiRows, 'female');
         bucket.saudiTotal = saudiRows.length;
-        bucket.nonSaudiMale = countGender(nonSaudiRows, 'ذكر');
-        bucket.nonSaudiFemale = countGender(nonSaudiRows, 'أنث');
+        bucket.nonSaudiMale = countGender(nonSaudiRows, 'male');
+        bucket.nonSaudiFemale = countGender(nonSaudiRows, 'female');
         bucket.nonSaudiTotal = nonSaudiRows.length;
         bucket.total = rows.length;
     };
@@ -2572,14 +2597,14 @@ function buildProgramYearSnapshot(prog, year, branch = ALL_BRANCH_FILTER_VALUE, 
 
     const internationalMale = detailRows.length
         ? detailRows.filter(row =>
-            !normalizeArabicText(row['الجنسية']).includes('سعود') &&
-            normalizeArabicText(row['الجنس']).includes('ذكر')
+            classifyStudentNationality(row['الجنسية']) === 'nonSaudi' &&
+            classifyStudentGender(row['الجنس']) === 'male'
         ).length
         : null;
     const internationalFemale = detailRows.length
         ? detailRows.filter(row =>
-            !normalizeArabicText(row['الجنسية']).includes('سعود') &&
-            normalizeArabicText(row['الجنس']).includes('أنث')
+            classifyStudentNationality(row['الجنسية']) === 'nonSaudi' &&
+            classifyStudentGender(row['الجنس']) === 'female'
         ).length
         : null;
 
@@ -2715,7 +2740,7 @@ function buildSelfStudyReport(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
     const notes = [
         'عمود المتوقع بعد عام تقديري، مبني على الاتجاه الفعلي ومقرب لأقرب 5.',
         'صف عدد الطلاب المخطط التحاقهم بالبرنامج يعتمد على عدد المستجدين الفعلي عند غياب ملف الهدف السنوي.',
-        'بيانات نظام الدراسة والتفصيل بالجنسية تعتمد على ملف الطلاب التفصيلي، والمتاح حاليًا لعامي 1445 و1446.',
+        'بيانات نظام الدراسة والتفصيل بالجنسية والجنس، بما في ذلك توزيع غير السعوديين إلى ذكور وإناث، تعتمد على ملف الطلاب التفصيلي والمتاح حاليًا لعامي 1445 و1446.',
         'إحصاءات الشعب وعبء التدريس مبنية على سجلات النشاط التدريسي المرتبطة بمقررات البرنامج.',
         'جنسية أعضاء هيئة التدريس وجنسهم يعتمدان على ملف الأعضاء المحدث داخل مشروع الأنشطة.',
         'متوسط عبء التدريس للذكور والإناث في جدول هيئة التدريس يعتمد على متوسط العبء الفعلي لأعضاء هيئة التدريس المصنفين بهذا الجنس داخل البرنامج.'
