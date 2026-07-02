@@ -20,6 +20,8 @@ const SHARI3AH_SURVEYS_DATA_URL = String(
     KPI_CONFIG.shari3ahSurveysDataUrl || 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/surveys-data.js'
 ).trim();
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
+const ALL_BRANCH_FILTER_VALUE = '__all__';
+const ALL_BRANCH_FILTER_LABEL = 'الكل';
 const RESEARCH_KPI_EXCLUDED_RANKS = new Set(['معيد', 'محاضر', 'متعاون', 'مدرس']);
 const GRADUATE_PROGRAM_ALIASES = {
     // توحيد الاختلافات الإملائية فقط دون دمج برامج مختلفة.
@@ -140,6 +142,10 @@ let analyticsChart = null;
 let currentAnalyticsReport = null;
 let studentCategoryChart = null;
 let currentStudentCategoryReport = null;
+let teachingProgramSupportByKey = {};
+let programFacultyFteByBranchKey = {};
+let researchActivitySupportByYearDept = {};
+let availableFacultyBranches = [];
 
 const SUPPORTED_KPI_DEGREES = new Set(['بكالوريوس','الماجستير','دكتوراه']);
 const RANK_ALLOWED_DEGREES = {
@@ -515,6 +521,242 @@ function normalizeSurveyProgramName(name) {
         .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
+}
+
+function buildProgramMajorDegreeKey(programName, degreeName) {
+    const major = normalizeSurveyProgramName(programName);
+    const degree = normalizeDegree(degreeName);
+    if (!major || !degree) return '';
+    return `${major}|${degree}`;
+}
+
+function buildProgramDataKey(year, dept, programName, degreeName) {
+    const normalizedYear = parseInt(year, 10);
+    const normalizedDept = normalizeDepartment(dept);
+    const normalizedMajor = normalizeSurveyProgramName(programName);
+    const normalizedDegree = normalizeDegree(degreeName);
+    if (!normalizedYear || !normalizedDept || !normalizedMajor || !normalizedDegree) return '';
+    return `${normalizedYear}|${normalizedDept}|${normalizedMajor}|${normalizedDegree}`;
+}
+
+function normalizeBranchName(branch) {
+    return String(branch || '').trim();
+}
+
+function buildProgramBranchDataKey(programKey, branch) {
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!programKey || !normalizedBranch) return '';
+    return `${programKey}|${normalizedBranch}`;
+}
+
+function buildYearDeptKey(year, dept) {
+    const normalizedYear = parseInt(year, 10);
+    const normalizedDept = normalizeDepartment(dept);
+    if (!normalizedYear || !normalizedDept) return '';
+    return `${normalizedYear}|${normalizedDept}`;
+}
+
+function buildYearDeptBranchKey(year, dept, branch) {
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch) return '';
+    const yearDeptKey = buildYearDeptKey(year, dept);
+    return yearDeptKey ? `${yearDeptKey}|${normalizedBranch}` : '';
+}
+
+function detectSectionGender(course) {
+    const location = String(course?.l || '').trim();
+    if (location.includes('طالبات') || location.includes('الطالبات')) return 'female';
+    return 'male';
+}
+
+function classifyFacultyNationality(value) {
+    const normalized = normalizeArabicText(value);
+    if (!normalized) return 'unknown';
+    return normalized.includes('سعود') ? 'saudi' : 'nonSaudi';
+}
+
+function classifyFacultyGender(value) {
+    const normalized = normalizeArabicText(value);
+    if (!normalized) return 'unknown';
+    if (normalized.includes('ذكر')) return 'male';
+    if (normalized.includes('انث')) return 'female';
+    return 'unknown';
+}
+
+function createFacultyRankAggregate() {
+    return {
+        count: 0,
+        loadSum: 0,
+        maleLoadSum: 0,
+        maleLoadCount: 0,
+        femaleLoadSum: 0,
+        femaleLoadCount: 0,
+        saudiMaleCount: 0,
+        saudiFemaleCount: 0,
+        saudiCount: 0,
+        nonSaudiMaleCount: 0,
+        nonSaudiFemaleCount: 0,
+        nonSaudiCount: 0,
+        unknownNationalityCount: 0,
+        unknownGenderCount: 0
+    };
+}
+
+function mergeFacultyRankAggregate(target, source) {
+    if (!source) return target;
+    target.count += Number(source.count) || 0;
+    target.loadSum += Number(source.loadSum) || 0;
+    target.maleLoadSum += Number(source.maleLoadSum) || 0;
+    target.maleLoadCount += Number(source.maleLoadCount) || 0;
+    target.femaleLoadSum += Number(source.femaleLoadSum) || 0;
+    target.femaleLoadCount += Number(source.femaleLoadCount) || 0;
+    target.saudiMaleCount += Number(source.saudiMaleCount) || 0;
+    target.saudiFemaleCount += Number(source.saudiFemaleCount) || 0;
+    target.saudiCount += Number(source.saudiCount) || 0;
+    target.nonSaudiMaleCount += Number(source.nonSaudiMaleCount) || 0;
+    target.nonSaudiFemaleCount += Number(source.nonSaudiFemaleCount) || 0;
+    target.nonSaudiCount += Number(source.nonSaudiCount) || 0;
+    target.unknownNationalityCount += Number(source.unknownNationalityCount) || 0;
+    target.unknownGenderCount += Number(source.unknownGenderCount) || 0;
+    return target;
+}
+
+function createResearchActivityAggregate() {
+    return {
+        faculty_total: 0,
+        faculty_published: 0,
+        research_count: 0,
+        citations: 0,
+        citations_per_publication: 0,
+        research_source: 'faculty_activities_live'
+    };
+}
+
+function createRawTeachingSupportBucket(includeBranches = true) {
+    const bucket = {
+        totalSections: 0,
+        totalStudents: 0,
+        maleSections: 0,
+        maleStudents: 0,
+        femaleSections: 0,
+        femaleStudents: 0,
+        exclusiveSections: 0,
+        exclusiveStudents: 0,
+        exclusiveMaleSections: 0,
+        exclusiveMaleStudents: 0,
+        exclusiveFemaleSections: 0,
+        exclusiveFemaleStudents: 0,
+        facultyById: {}
+    };
+    if (includeBranches) bucket.branchBuckets = {};
+    return bucket;
+}
+
+function getRawTeachingSupportBranchBucket(bucket, branch) {
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!bucket || !normalizedBranch) return null;
+    if (!bucket.branchBuckets) bucket.branchBuckets = {};
+    if (!bucket.branchBuckets[normalizedBranch]) {
+        bucket.branchBuckets[normalizedBranch] = createRawTeachingSupportBucket(false);
+    }
+    return bucket.branchBuckets[normalizedBranch];
+}
+
+function finalizeTeachingSupportBucket(bucket) {
+    if (!bucket) return null;
+    const useExclusive = (bucket.exclusiveSections || 0) > 0;
+    const sectionsTotal = useExclusive ? (bucket.exclusiveSections || 0) : (bucket.totalSections || 0);
+    const studentsTotal = useExclusive ? (bucket.exclusiveStudents || 0) : (bucket.totalStudents || 0);
+    const maleSections = useExclusive ? (bucket.exclusiveMaleSections || 0) : (bucket.maleSections || 0);
+    const maleStudents = useExclusive ? (bucket.exclusiveMaleStudents || 0) : (bucket.maleStudents || 0);
+    const femaleSections = useExclusive ? (bucket.exclusiveFemaleSections || 0) : (bucket.femaleSections || 0);
+    const femaleStudents = useExclusive ? (bucket.exclusiveFemaleStudents || 0) : (bucket.femaleStudents || 0);
+
+    const facultyEntries = Object.values(bucket.facultyById || {});
+    const facultyIncluded = facultyEntries.filter(entry =>
+        (entry.nonSharedHours || 0) > 0 || (entry.exclusiveHours || 0) > 0
+    );
+    const facultyFallback = facultyIncluded.length ? facultyIncluded : facultyEntries.filter(entry => (entry.totalHours || 0) > 0);
+    const facultyRanks = {};
+    let facultyLoadSum = 0;
+
+    facultyFallback.forEach(entry => {
+        const rank = normalizeRank(entry.rank || '') || 'غير مصنف';
+        const effectiveHours = entry.nonSharedHours > 0
+            ? entry.nonSharedHours
+            : (entry.exclusiveHours > 0 ? entry.exclusiveHours : entry.totalHours);
+        if (!Number.isFinite(effectiveHours) || effectiveHours <= 0) return;
+
+        if (!facultyRanks[rank]) facultyRanks[rank] = createFacultyRankAggregate();
+        facultyRanks[rank].count++;
+        facultyRanks[rank].loadSum += effectiveHours;
+        const genderGroup = classifyFacultyGender(entry.gender);
+        if (genderGroup === 'male') {
+            facultyRanks[rank].maleLoadSum += effectiveHours;
+            facultyRanks[rank].maleLoadCount++;
+        } else if (genderGroup === 'female') {
+            facultyRanks[rank].femaleLoadSum += effectiveHours;
+            facultyRanks[rank].femaleLoadCount++;
+        } else {
+            facultyRanks[rank].unknownGenderCount++;
+        }
+
+        const nationalityGroup = classifyFacultyNationality(entry.nationality);
+        if (nationalityGroup === 'saudi') {
+            facultyRanks[rank].saudiCount++;
+            if (genderGroup === 'male') facultyRanks[rank].saudiMaleCount++;
+            else if (genderGroup === 'female') facultyRanks[rank].saudiFemaleCount++;
+        } else if (nationalityGroup === 'nonSaudi') {
+            facultyRanks[rank].nonSaudiCount++;
+            if (genderGroup === 'male') facultyRanks[rank].nonSaudiMaleCount++;
+            else if (genderGroup === 'female') facultyRanks[rank].nonSaudiFemaleCount++;
+        } else {
+            facultyRanks[rank].unknownNationalityCount++;
+        }
+        facultyLoadSum += effectiveHours;
+    });
+
+    return {
+        sectionSource: useExclusive ? 'exclusive' : (sectionsTotal > 0 ? 'mapped' : 'none'),
+        totalSections: sectionsTotal,
+        totalStudentsInSections: studentsTotal,
+        avgStudentsPerSection: sectionsTotal > 0 ? Math.round((studentsTotal / sectionsTotal) * 10) / 10 : null,
+        maleSections,
+        maleStudents,
+        avgMaleStudentsPerSection: maleSections > 0 ? Math.round((maleStudents / maleSections) * 10) / 10 : null,
+        femaleSections,
+        femaleStudents,
+        avgFemaleStudentsPerSection: femaleSections > 0 ? Math.round((femaleStudents / femaleSections) * 10) / 10 : null,
+        facultyCount: facultyFallback.length,
+        facultyAvgLoad: facultyFallback.length > 0
+            ? Math.round((facultyLoadSum / facultyFallback.length) * 10) / 10 : null,
+        facultyRanks
+    };
+}
+
+function roundToNearestFive(value) {
+    if (!Number.isFinite(value)) return null;
+    return Math.max(0, Math.round(value / 5) * 5);
+}
+
+function estimateNextValue(points) {
+    const usable = (points || [])
+        .filter(point => Number.isFinite(point?.value))
+        .sort((a, b) => a.year - b.year);
+
+    if (!usable.length) return null;
+    if (usable.length === 1) return usable[0].value;
+
+    const last = usable[usable.length - 1];
+    const prev = usable[usable.length - 2];
+    const gap = Math.max(1, (last.year || 0) - (prev.year || 0));
+    const deltaPerYear = (last.value - prev.value) / gap;
+    return last.value + deltaPerYear;
+}
+
+function estimateNextRoundedCount(points) {
+    const estimated = estimateNextValue(points);
+    return Number.isFinite(estimated) ? roundToNearestFive(estimated) : null;
 }
 
 function getStudentCategoryDefinition(categoryId) {
@@ -938,6 +1180,7 @@ function aggregateGraduateSurveyRows(surveyRows) {
             performance_rate_sample: g.perfCount,
             employment_rate: g.employmentCount > 0
                 ? pct(g.employedCount, g.employmentCount) : null,
+            employment_employed_count: g.employedCount,
             employment_rate_sample: g.employmentCount,
             eval_employers: g.employerEvalCount > 0
                 ? Math.round((g.employerEvalSum / g.employerEvalCount) * 100) / 100 : null,
@@ -1021,6 +1264,7 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
         }
         if (metrics.employment_rate != null) {
             row.employment_rate = metrics.employment_rate;
+            row.employment_employed_count = metrics.employment_employed_count || 0;
             row.employment_rate_sample = metrics.employment_rate_sample || 0;
             touched = true;
         }
@@ -1302,10 +1546,12 @@ async function fetchJSONFromSources(paths) {
 
 async function applyResearchIndicatorsFromActivities(rows) {
     const years = [...new Set(rows.map(r => absYearFromSemester(r.Semester)))];
+    researchActivitySupportByYearDept = {};
     if (!years.length) return { applied: false, reason: 'no-years' };
 
     const stamp = Date.now();
     const facultyPaths = [
+        `data/faculty.csv?t=${stamp}`,
         `${ACTIVITIES_RAW_BASE}/faculty.csv?t=${stamp}`,
     ];
     const publicationsPaths = [
@@ -1331,6 +1577,11 @@ async function applyResearchIndicatorsFromActivities(rows) {
         return { applied: false, reason: 'empty-faculty-or-publications' };
     }
 
+    availableFacultyBranches = [...new Set([
+        ...availableFacultyBranches,
+        ...facultyRows.map(row => normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))).filter(Boolean)
+    ])].sort((a, b) => a.localeCompare(b, 'ar'));
+
     // مطابقة موقع الأنشطة: دمج البيانات الحية من Google Sheets فوق CSV
     const sheetsPayload = await fetchActivitySheetsData(configObj?.google_sheets_api);
     if (sheetsPayload?.publications?.length) {
@@ -1341,7 +1592,9 @@ async function applyResearchIndicatorsFromActivities(rows) {
 
     // فهارس أعضاء هيئة التدريس لمطابقة منطق موقع الأنشطة
     const deptIds = {};               // dept -> Set(all ids) عبر كل السنوات
+    const deptBranchIds = {};         // dept|branch -> Set(all ids)
     const eligibleIdsByYearDept = {}; // year|dept -> Set(ids) (نشط + مؤهل للـ KPI)
+    const eligibleIdsByYearDeptBranch = {}; // year|dept|branch -> Set(ids)
     facultyRows.forEach(row => {
         const id = pickCell(row, ['id', 'ID']);
         const year = parseInt(pickCell(row, ['year', 'Year']), 10);
@@ -1350,26 +1603,44 @@ async function applyResearchIndicatorsFromActivities(rows) {
         const active = pickCell(row, ['active', 'Active']) === 'نعم';
         const dept = normalizeDepartment(pickCell(row, ['department', 'Department']));
         const rank = normalizeRank(pickCell(row, ['rank', 'Rank']));
+        const branch = normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']));
 
         if (dept) {
             if (!deptIds[dept]) deptIds[dept] = new Set();
             deptIds[dept].add(id);
+            if (branch) {
+                const deptBranchKey = `${dept}|${branch}`;
+                if (!deptBranchIds[deptBranchKey]) deptBranchIds[deptBranchKey] = new Set();
+                deptBranchIds[deptBranchKey].add(id);
+            }
         }
         if (!active || !dept) return;
 
         if (!RESEARCH_KPI_EXCLUDED_RANKS.has(rank)) {
-            const key = `${year}|${dept}`;
+            const key = buildYearDeptKey(year, dept);
             if (!eligibleIdsByYearDept[key]) eligibleIdsByYearDept[key] = new Set();
             eligibleIdsByYearDept[key].add(id);
+            if (branch) {
+                const branchKey = buildYearDeptBranchKey(year, dept, branch);
+                if (!eligibleIdsByYearDeptBranch[branchKey]) eligibleIdsByYearDeptBranch[branchKey] = new Set();
+                eligibleIdsByYearDeptBranch[branchKey].add(id);
+            }
         }
     });
 
     // author -> depts (من جميع سنوات faculty كما في موقع الأنشطة)
     const authorDeptMap = {};
+    const authorDeptBranchMap = {};
     Object.entries(deptIds).forEach(([dept, idsSet]) => {
         idsSet.forEach(fid => {
             if (!authorDeptMap[fid]) authorDeptMap[fid] = new Set();
             authorDeptMap[fid].add(dept);
+        });
+    });
+    Object.entries(deptBranchIds).forEach(([deptBranchKey, idsSet]) => {
+        idsSet.forEach(fid => {
+            if (!authorDeptBranchMap[fid]) authorDeptBranchMap[fid] = new Set();
+            authorDeptBranchMap[fid].add(deptBranchKey);
         });
     });
 
@@ -1377,6 +1648,9 @@ async function applyResearchIndicatorsFromActivities(rows) {
     const publishingMembersByYearDept = {};
     const publicationsCountByYearDept = {};
     const citationsTotalByYearDept = {};
+    const publishingMembersByYearDeptBranch = {};
+    const publicationsCountByYearDeptBranch = {};
+    const citationsTotalByYearDeptBranch = {};
 
     publicationsRows.forEach(pub => {
         const year = parseInt(pickCell(pub, ['year', 'Year']), 10);
@@ -1387,16 +1661,19 @@ async function applyResearchIndicatorsFromActivities(rows) {
         if (!authorIds.length) return;
 
         const departmentsTouched = new Set();
+        const deptBranchesTouched = new Set();
         authorIds.forEach(fid => {
             const depts = authorDeptMap[fid];
             if (!depts) return;
             depts.forEach(d => departmentsTouched.add(d));
+            const deptBranches = authorDeptBranchMap[fid];
+            if (deptBranches) deptBranches.forEach(key => deptBranchesTouched.add(key));
         });
 
-        if (!departmentsTouched.size) return;
+        if (!departmentsTouched.size && !deptBranchesTouched.size) return;
         const citations = parseCitationValue(pickCell(pub, ['citations_range', 'Citations', 'citations']), citationsMap);
         departmentsTouched.forEach(dept => {
-            const ydKey = `${year}|${dept}`;
+            const ydKey = buildYearDeptKey(year, dept);
             publicationsCountByYearDept[ydKey] = (publicationsCountByYearDept[ydKey] || 0) + 1;
             citationsTotalByYearDept[ydKey] = (citationsTotalByYearDept[ydKey] || 0) + citations;
 
@@ -1407,13 +1684,27 @@ async function applyResearchIndicatorsFromActivities(rows) {
                 if (eligible.has(fid)) publishingMembersByYearDept[ydKey].add(fid);
             });
         });
+        deptBranchesTouched.forEach(deptBranchKey => {
+            const [dept, ...branchParts] = deptBranchKey.split('|');
+            const branch = branchParts.join('|');
+            const ydbKey = buildYearDeptBranchKey(year, dept, branch);
+            publicationsCountByYearDeptBranch[ydbKey] = (publicationsCountByYearDeptBranch[ydbKey] || 0) + 1;
+            citationsTotalByYearDeptBranch[ydbKey] = (citationsTotalByYearDeptBranch[ydbKey] || 0) + citations;
+
+            const eligible = eligibleIdsByYearDeptBranch[ydbKey];
+            if (!eligible || !eligible.size) return;
+            if (!publishingMembersByYearDeptBranch[ydbKey]) publishingMembersByYearDeptBranch[ydbKey] = new Set();
+            authorIds.forEach(fid => {
+                if (eligible.has(fid)) publishingMembersByYearDeptBranch[ydbKey].add(fid);
+            });
+        });
     });
 
     let appliedRows = 0;
     rows.forEach(r => {
         const year = absYearFromSemester(r.Semester);
         const dept = normalizeDepartment(r.Dept_aName);
-        const ydKey = `${year}|${dept}`;
+        const ydKey = buildYearDeptKey(year, dept);
 
         const eligibleSet = eligibleIdsByYearDept[ydKey];
         if (!eligibleSet || !eligibleSet.size) return;
@@ -1433,7 +1724,45 @@ async function applyResearchIndicatorsFromActivities(rows) {
         appliedRows++;
     });
 
-    return { applied: appliedRows > 0, appliedRows };
+    Object.entries(eligibleIdsByYearDept).forEach(([ydKey, eligibleSet]) => {
+        if (!eligibleSet?.size) return;
+        const aggregate = createResearchActivityAggregate();
+        const publicationsCount = publicationsCountByYearDept[ydKey] || 0;
+        const citationsTotal = citationsTotalByYearDept[ydKey] || 0;
+        aggregate.faculty_total = eligibleSet.size;
+        aggregate.faculty_published = (publishingMembersByYearDept[ydKey] || new Set()).size;
+        aggregate.research_count = publicationsCount;
+        aggregate.citations = Math.round(citationsTotal * 10) / 10;
+        aggregate.citations_per_publication = publicationsCount > 0
+            ? Math.round((citationsTotal / publicationsCount) * 10) / 10 : 0;
+        researchActivitySupportByYearDept[ydKey] = { ...aggregate, byBranch: {} };
+    });
+
+    Object.entries(eligibleIdsByYearDeptBranch).forEach(([ydbKey, eligibleSet]) => {
+        if (!eligibleSet?.size) return;
+        const [yearStr, dept, ...branchParts] = ydbKey.split('|');
+        const branch = branchParts.join('|');
+        const ydKey = `${yearStr}|${dept}`;
+        if (!researchActivitySupportByYearDept[ydKey]) {
+            researchActivitySupportByYearDept[ydKey] = { ...createResearchActivityAggregate(), byBranch: {} };
+        }
+        const aggregate = createResearchActivityAggregate();
+        const publicationsCount = publicationsCountByYearDeptBranch[ydbKey] || 0;
+        const citationsTotal = citationsTotalByYearDeptBranch[ydbKey] || 0;
+        aggregate.faculty_total = eligibleSet.size;
+        aggregate.faculty_published = (publishingMembersByYearDeptBranch[ydbKey] || new Set()).size;
+        aggregate.research_count = publicationsCount;
+        aggregate.citations = Math.round(citationsTotal * 10) / 10;
+        aggregate.citations_per_publication = publicationsCount > 0
+            ? Math.round((citationsTotal / publicationsCount) * 10) / 10 : 0;
+        researchActivitySupportByYearDept[ydKey].byBranch[branch] = aggregate;
+    });
+
+    return {
+        applied: appliedRows > 0,
+        appliedRows,
+        branches: availableFacultyBranches.length
+    };
 }
 
 function resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid) {
@@ -1487,6 +1816,11 @@ async function applyTeachingBasedFacultyFTE(rows) {
         return { applied: false, reason: 'empty-plans-or-faculty' };
     }
 
+    availableFacultyBranches = [...new Set([
+        ...availableFacultyBranches,
+        ...facultyRows.map(row => normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))).filter(Boolean)
+    ])].sort((a, b) => a.localeCompare(b, 'ar'));
+
     const yearPayloads = await Promise.all(
         years.map(y => fetchJSONIfExists(`data/teaching/years/${y}.json?t=${stamp}`))
     );
@@ -1507,15 +1841,15 @@ async function applyTeachingBasedFacultyFTE(rows) {
     rows.forEach(r => {
         const year = absYearFromSemester(r.Semester);
         const dept = normalizeDepartment(r.Dept_aName);
-        const major = String(r.Major_aName || '').trim();
+        const major = normalizeSurveyProgramName(r.Major_aName);
         const degree = normalizeDegree(r.Degree_aName);
         if (!major || !SUPPORTED_KPI_DEGREES.has(degree)) return;
 
-        const pKey = `${year}|${dept}|${major}|${degree}`;
+        const pKey = buildProgramDataKey(year, dept, major, degree);
         studentsByProgramKey[pKey] = Number(r.students_total) || 0;
         programMetaByKey[pKey] = { year, dept, major, degree };
 
-        const mdKey = `${year}|${major}|${degree}`;
+        const mdKey = `${year}|${buildProgramMajorDegreeKey(major, degree)}`;
         if (!programLookupByYearMajorDegree[mdKey]) programLookupByYearMajorDegree[mdKey] = [];
         if (!programLookupByYearMajorDegree[mdKey].includes(pKey)) {
             programLookupByYearMajorDegree[mdKey].push(pKey);
@@ -1534,15 +1868,37 @@ async function applyTeachingBasedFacultyFTE(rows) {
 
     // خريطة المقرر -> البرامج
     const courseToPrograms = {};
+    const programExclusiveCodes = {};
+    const programNonSharedCodes = {};
     planRows.forEach(row => {
         const code = pickCell(row, ['Code', '\uFEFFCode', 'رمز المقرر']);
-        const major = pickCell(row, ['Program', '\uFEFFProgram', 'البرنامج']);
+        const major = normalizeSurveyProgramName(pickCell(row, ['Program', '\uFEFFProgram', 'البرنامج']));
         const degree = normalizeDegree(pickCell(row, ['Degree', 'الدرجة']));
+        const courseType = pickCell(row, ['نوع المقرر']);
         if (!code || !major || !SUPPORTED_KPI_DEGREES.has(degree)) return;
+        const planKey = buildProgramMajorDegreeKey(major, degree);
         if (!courseToPrograms[code]) courseToPrograms[code] = [];
-        if (!courseToPrograms[code].some(x => x.major === major && x.degree === degree)) {
-            courseToPrograms[code].push({ major, degree });
+        if (!courseToPrograms[code].some(x => x.planKey === planKey)) {
+            courseToPrograms[code].push({ major, degree, planKey });
         }
+
+        if (courseType.includes('فريد')) {
+            if (!programExclusiveCodes[planKey]) programExclusiveCodes[planKey] = new Set();
+            programExclusiveCodes[planKey].add(code);
+        }
+        if (!courseType.includes('مشترك')) {
+            if (!programNonSharedCodes[planKey]) programNonSharedCodes[planKey] = new Set();
+            programNonSharedCodes[planKey].add(code);
+        }
+    });
+
+    Object.entries(courseToPrograms).forEach(([code, mappings]) => {
+        if (mappings.length !== 1) return;
+        const planKey = mappings[0].planKey;
+        if (!programExclusiveCodes[planKey]) programExclusiveCodes[planKey] = new Set();
+        if (!programNonSharedCodes[planKey]) programNonSharedCodes[planKey] = new Set();
+        programExclusiveCodes[planKey].add(code);
+        programNonSharedCodes[planKey].add(code);
     });
 
     // فهرس أعضاء هيئة التدريس (للـ fallback)
@@ -1559,7 +1915,10 @@ async function applyTeachingBasedFacultyFTE(rows) {
             year,
             rank: normalizeRank(pickCell(row, ['rank', 'Rank'])),
             dept: normalizeDepartment(pickCell(row, ['department', 'Department'])),
-            active: pickCell(row, ['active', 'Active']) === 'نعم'
+            active: pickCell(row, ['active', 'Active']) === 'نعم',
+            nationality: String(pickCell(row, ['nationality', 'Nationality', 'الجنسية']) || '').trim(),
+            gender: String(pickCell(row, ['gender', 'Gender', 'الجنس']) || '').trim(),
+            branch: String(pickCell(row, ['branch', 'Branch', 'الفرع']) || '').trim()
         };
 
         facultyProfilesByYearId[`${year}|${id}`] = profile;
@@ -1576,6 +1935,15 @@ async function applyTeachingBasedFacultyFTE(rows) {
     Object.values(facultyProfilesById).forEach(list => list.sort((a,b) => a.year - b.year));
 
     const facultyProgramLoads = {}; // year|fid -> {programKey: weighted_load}
+    const supportByProgramKey = {};
+    programFacultyFteByBranchKey = {};
+
+    function getSupportBucket(pKey) {
+        if (!supportByProgramKey[pKey]) {
+            supportByProgramKey[pKey] = createRawTeachingSupportBucket(true);
+        }
+        return supportByProgramKey[pKey];
+    }
 
     // 1) تحميل تدريسي فعلي من ملفات teaching/years/*.json
     Object.entries(teachingByYear).forEach(([yearStr, records]) => {
@@ -1598,20 +1966,25 @@ async function applyTeachingBasedFacultyFTE(rows) {
                 const code = String(c.cc || '').trim();
 
                 let candidateProgramKeys = [];
+                let supportCandidates = [];
 
                 // محاولة ربط مباشر من رمز المقرر
                 const mapped = courseToPrograms[code] || [];
                 mapped.forEach(mp => {
                     if (mp.degree !== secDegree) return;
-                    const mdKey = `${year}|${mp.major}|${mp.degree}`;
+                    const mdKey = `${year}|${buildProgramMajorDegreeKey(mp.major, mp.degree)}`;
                     const options = programLookupByYearMajorDegree[mdKey] || [];
                     if (!options.length) return;
                     if (options.length === 1) {
                         candidateProgramKeys.push(options[0]);
+                        supportCandidates.push({ key: options[0], planKey: mp.planKey });
                         return;
                     }
                     const deptMatched = deptHint ? options.filter(k => k.split('|')[1] === deptHint) : [];
-                    candidateProgramKeys.push(...(deptMatched.length ? deptMatched : options));
+                    (deptMatched.length ? deptMatched : options).forEach(key => {
+                        candidateProgramKeys.push(key);
+                        supportCandidates.push({ key, planKey: mp.planKey });
+                    });
                 });
 
                 // fallback: لو الرمز غير موجود في الخطط نوزع داخل القسم/الدرجة
@@ -1624,6 +1997,98 @@ async function applyTeachingBasedFacultyFTE(rows) {
                 const weights = buildWeights(candidateProgramKeys, studentsByProgramKey);
                 weights.forEach(w => {
                     facultyProgramLoads[facKey][w.key] = (facultyProgramLoads[facKey][w.key] || 0) + (load * w.weight);
+                });
+
+                const supportMap = new Map();
+                supportCandidates.forEach(item => {
+                    if (!item?.key || !item?.planKey) return;
+                    if (!supportMap.has(item.key)) supportMap.set(item.key, item.planKey);
+                });
+
+                const sectionStudents = Number(c.e) || 0;
+                const sectionGender = detectSectionGender(c);
+                const branchName = normalizeBranchName(profile?.branch || '');
+                supportMap.forEach((planKey, pKey) => {
+                    const bucket = getSupportBucket(pKey);
+                    const exclusiveSet = programExclusiveCodes[planKey];
+                    const nonSharedSet = programNonSharedCodes[planKey];
+                    const isExclusive = Boolean(exclusiveSet && exclusiveSet.has(code));
+                    const isNonShared = Boolean(nonSharedSet && nonSharedSet.has(code));
+                    const targetBuckets = [bucket];
+                    const branchBucket = getRawTeachingSupportBranchBucket(bucket, branchName);
+                    if (branchBucket) targetBuckets.push(branchBucket);
+
+                    targetBuckets.forEach(targetBucket => {
+                        targetBucket.totalSections++;
+                        targetBucket.totalStudents += sectionStudents;
+
+                        if (sectionGender === 'female') {
+                            targetBucket.femaleSections++;
+                            targetBucket.femaleStudents += sectionStudents;
+                        } else {
+                            targetBucket.maleSections++;
+                            targetBucket.maleStudents += sectionStudents;
+                        }
+
+                        if (isExclusive) {
+                            targetBucket.exclusiveSections++;
+                            targetBucket.exclusiveStudents += sectionStudents;
+                            if (sectionGender === 'female') {
+                                targetBucket.exclusiveFemaleSections++;
+                                targetBucket.exclusiveFemaleStudents += sectionStudents;
+                            } else {
+                                targetBucket.exclusiveMaleSections++;
+                                targetBucket.exclusiveMaleStudents += sectionStudents;
+                            }
+                        }
+
+                        if (!targetBucket.facultyById[fid]) {
+                            targetBucket.facultyById[fid] = {
+                                rank: normalizeRank(profile?.rank || ''),
+                                nationality: String(profile?.nationality || '').trim(),
+                                gender: String(profile?.gender || '').trim(),
+                                branch: String(profile?.branch || '').trim(),
+                                totalHours: 0,
+                                nonSharedHours: 0,
+                                exclusiveHours: 0,
+                                maleHours: 0,
+                                femaleHours: 0,
+                                nonSharedMaleHours: 0,
+                                nonSharedFemaleHours: 0,
+                                exclusiveMaleHours: 0,
+                                exclusiveFemaleHours: 0,
+                                sections: 0
+                            };
+                        }
+                        const facultyEntry = targetBucket.facultyById[fid];
+                        facultyEntry.rank = facultyEntry.rank || normalizeRank(profile?.rank || '');
+                        if (!facultyEntry.nationality && profile?.nationality) {
+                            facultyEntry.nationality = String(profile.nationality).trim();
+                        }
+                        if (!facultyEntry.gender && profile?.gender) {
+                            facultyEntry.gender = String(profile.gender).trim();
+                        }
+                        if (!facultyEntry.branch && profile?.branch) {
+                            facultyEntry.branch = String(profile.branch).trim();
+                        }
+                        facultyEntry.totalHours += load;
+                        facultyEntry.sections++;
+                        if (sectionGender === 'female') {
+                            facultyEntry.femaleHours += load;
+                        } else {
+                            facultyEntry.maleHours += load;
+                        }
+                        if (isNonShared) {
+                            facultyEntry.nonSharedHours += load;
+                            if (sectionGender === 'female') facultyEntry.nonSharedFemaleHours += load;
+                            else facultyEntry.nonSharedMaleHours += load;
+                        }
+                        if (isExclusive) {
+                            facultyEntry.exclusiveHours += load;
+                            if (sectionGender === 'female') facultyEntry.exclusiveFemaleHours += load;
+                            else facultyEntry.exclusiveMaleHours += load;
+                        }
+                    });
                 });
             });
         });
@@ -1640,8 +2105,14 @@ async function applyTeachingBasedFacultyFTE(rows) {
         const year = parseInt(yearStr, 10);
         const profile = resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid);
         const baseFTE = getRankBaseFTE(profile?.rank);
+        const branchName = normalizeBranchName(profile?.branch || '');
         Object.entries(byProgram).forEach(([pKey, load]) => {
-            fteByProgramKey[pKey] = (fteByProgramKey[pKey] || 0) + ((load / totalLoad) * baseFTE);
+            const allocated = (load / totalLoad) * baseFTE;
+            fteByProgramKey[pKey] = (fteByProgramKey[pKey] || 0) + allocated;
+            const branchKey = buildProgramBranchDataKey(pKey, branchName);
+            if (branchKey) {
+                programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + allocated;
+            }
         });
     });
 
@@ -1661,20 +2132,42 @@ async function applyTeachingBasedFacultyFTE(rows) {
             if (!candidateKeys.length) return;
 
             const baseFTE = getRankBaseFTE(profile.rank);
+            const branchName = normalizeBranchName(profile.branch || '');
             const weights = buildWeights(candidateKeys, studentsByProgramKey);
             weights.forEach(w => {
-                fteByProgramKey[w.key] = (fteByProgramKey[w.key] || 0) + (w.weight * baseFTE);
+                const allocated = w.weight * baseFTE;
+                fteByProgramKey[w.key] = (fteByProgramKey[w.key] || 0) + allocated;
+                const branchKey = buildProgramBranchDataKey(w.key, branchName);
+                if (branchKey) {
+                    programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + allocated;
+                }
             });
         });
     });
+
+    const finalizedSupportByProgramKey = {};
+    Object.entries(supportByProgramKey).forEach(([pKey, bucket]) => {
+        const finalizedBucket = finalizeTeachingSupportBucket(bucket) || {};
+        const byBranch = {};
+        Object.entries(bucket.branchBuckets || {}).forEach(([branch, branchBucket]) => {
+            const finalizedBranch = finalizeTeachingSupportBucket(branchBucket);
+            if (finalizedBranch) byBranch[branch] = finalizedBranch;
+        });
+        finalizedSupportByProgramKey[pKey] = {
+            ...finalizedBucket,
+            byBranch
+        };
+    });
+
+    teachingProgramSupportByKey = finalizedSupportByProgramKey;
 
     let programsWithComputedFTE = 0;
     rows.forEach(r => {
         const year = absYearFromSemester(r.Semester);
         const dept = normalizeDepartment(r.Dept_aName);
-        const major = String(r.Major_aName || '').trim();
+        const major = normalizeSurveyProgramName(r.Major_aName);
         const degree = normalizeDegree(r.Degree_aName);
-        const pKey = `${year}|${dept}|${major}|${degree}`;
+        const pKey = buildProgramDataKey(year, dept, major, degree);
         const computed = Number(fteByProgramKey[pKey]) || 0;
 
         if (computed > 0) {
@@ -1694,6 +2187,7 @@ async function applyTeachingBasedFacultyFTE(rows) {
         applied: programsWithComputedFTE > 0,
         programsWithComputedFTE,
         yearsWithTeaching: Object.keys(teachingByYear).length,
+        programsWithSupport: Object.keys(teachingProgramSupportByKey).length
     };
 }
 
@@ -1841,7 +2335,7 @@ function calcKPIs(d, degree) {
         ? Math.round((d.research_count / d.faculty_total) * 100) / 100 : null;
 
     // متوسط الاقتباسات لكل بحث (مطابقة لموقع الأنشطة)
-    if (d.research_source === 'faculty_activities_live' && Number.isFinite(d.citations_per_publication)) {
+    if (String(d.research_source || '').startsWith('faculty_activities_live') && Number.isFinite(d.citations_per_publication)) {
         kpi.citations_per_faculty = Math.round(d.citations_per_publication * 10) / 10;
     } else {
         kpi.citations_per_faculty = d.faculty_total > 0
@@ -1876,6 +2370,685 @@ function getSurveySampleCount(d, indicatorKey) {
     if (!sampleKey) return 0;
     const count = Number(d[sampleKey]);
     return Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+}
+
+function getTeachingSupportForProgramYear(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
+    const pKey = buildProgramDataKey(year, prog?.dept, prog?.name, prog?.degree);
+    if (!pKey) return null;
+    const support = teachingProgramSupportByKey[pKey] || null;
+    if (!support) return null;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) return support;
+    return support.byBranch?.[normalizedBranch] || null;
+}
+
+function getProgramFacultyBaseForBranch(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
+    const dataRow = prog?.years?.[year] || null;
+    if (!dataRow) return 0;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) {
+        return getFacultyBaseForRatio(dataRow);
+    }
+    const pKey = buildProgramDataKey(year, prog?.dept, prog?.name, prog?.degree);
+    const branchKey = buildProgramBranchDataKey(pKey, normalizedBranch);
+    const value = Number(programFacultyFteByBranchKey[branchKey]);
+    return Number.isFinite(value) && value > 0 ? (Math.round(value * 100) / 100) : 0;
+}
+
+function getResearchSupportForProgramYear(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
+    const yearDeptKey = buildYearDeptKey(year, prog?.dept);
+    if (!yearDeptKey) return null;
+    const support = researchActivitySupportByYearDept[yearDeptKey] || null;
+    if (!support) return null;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) return support;
+    return support.byBranch?.[normalizedBranch] || null;
+}
+
+function buildProgramDisplayData(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
+    const baseData = prog?.years?.[year] || null;
+    if (!baseData) return null;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) {
+        return { ...baseData };
+    }
+
+    const displayData = { ...baseData };
+    const teachingSupport = getTeachingSupportForProgramYear(prog, year, normalizedBranch);
+    if (teachingSupport) {
+        displayData.sections_total = Number(teachingSupport.totalSections) || 0;
+        displayData.sections_male = Number(teachingSupport.maleSections) || 0;
+        displayData.sections_female = Number(teachingSupport.femaleSections) || 0;
+    } else {
+        displayData.sections_total = 0;
+        displayData.sections_male = 0;
+        displayData.sections_female = 0;
+    }
+    const facultyBase = getProgramFacultyBaseForBranch(prog, year, normalizedBranch);
+    displayData.faculty_ratio_base = facultyBase;
+    displayData.faculty_ratio_source = facultyBase > 0 ? 'teaching_fte_branch' : 'branch_none';
+
+    const researchSupport = getResearchSupportForProgramYear(prog, year, normalizedBranch);
+    if (researchSupport) {
+        displayData.faculty_total = Number(researchSupport.faculty_total) || 0;
+        displayData.faculty_published = Number(researchSupport.faculty_published) || 0;
+        displayData.research_count = Number(researchSupport.research_count) || 0;
+        displayData.citations = Math.round((Number(researchSupport.citations) || 0) * 10) / 10;
+        displayData.citations_per_publication = Math.round((Number(researchSupport.citations_per_publication) || 0) * 10) / 10;
+        displayData.research_source = `${researchSupport.research_source || 'faculty_activities_live'}_branch`;
+    } else {
+        displayData.faculty_total = 0;
+        displayData.faculty_published = 0;
+        displayData.research_count = 0;
+        displayData.citations = 0;
+        displayData.citations_per_publication = 0;
+        displayData.research_source = 'faculty_activities_live_branch';
+    }
+
+    return displayData;
+}
+
+function buildProgramDisplayDataFromRow(row, branch = ALL_BRANCH_FILTER_VALUE) {
+    if (!row) return null;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) {
+        return { ...row };
+    }
+
+    const displayData = { ...row };
+    const year = parseInt(row.Semester, 10) || null;
+    const dept = normalizeDepartment(row.Dept_aName);
+    const major = normalizeSurveyProgramName(row.Major_aName);
+    const degree = normalizeDegree(row.Degree_aName);
+    const teachingSupport = getTeachingSupportForProgramYear({ dept, name: major, degree }, year, normalizedBranch);
+    if (teachingSupport) {
+        displayData.sections_total = Number(teachingSupport.totalSections) || 0;
+        displayData.sections_male = Number(teachingSupport.maleSections) || 0;
+        displayData.sections_female = Number(teachingSupport.femaleSections) || 0;
+    } else {
+        displayData.sections_total = 0;
+        displayData.sections_male = 0;
+        displayData.sections_female = 0;
+    }
+    const pKey = buildProgramDataKey(year, dept, major, degree);
+    const branchKey = buildProgramBranchDataKey(pKey, normalizedBranch);
+    const facultyBase = Number(programFacultyFteByBranchKey[branchKey]) || 0;
+    displayData.faculty_ratio_base = facultyBase > 0 ? Math.round(facultyBase * 100) / 100 : 0;
+    displayData.faculty_ratio_source = facultyBase > 0 ? 'teaching_fte_branch' : 'branch_none';
+
+    const researchSupport = getResearchSupportForProgramYear(
+        { dept, name: major, degree },
+        year,
+        normalizedBranch
+    );
+    if (researchSupport) {
+        displayData.faculty_total = Number(researchSupport.faculty_total) || 0;
+        displayData.faculty_published = Number(researchSupport.faculty_published) || 0;
+        displayData.research_count = Number(researchSupport.research_count) || 0;
+        displayData.citations = Math.round((Number(researchSupport.citations) || 0) * 10) / 10;
+        displayData.citations_per_publication = Math.round((Number(researchSupport.citations_per_publication) || 0) * 10) / 10;
+        displayData.research_source = `${researchSupport.research_source || 'faculty_activities_live'}_branch`;
+    } else {
+        displayData.faculty_total = 0;
+        displayData.faculty_published = 0;
+        displayData.research_count = 0;
+        displayData.citations = 0;
+        displayData.citations_per_publication = 0;
+        displayData.research_source = 'faculty_activities_live_branch';
+    }
+
+    return displayData;
+}
+
+function getStudentDetailRowsForProgramYear(prog, year) {
+    const normalizedProgram = normalizeSurveyProgramName(prog?.name || '');
+    const normalizedDegree = normalizeDegree(prog?.degree || '');
+    const normalizedDept = normalizeDepartment(prog?.dept || '');
+    return studentDetailData.filter(row =>
+        row._year === year &&
+        row['التخصص'] === normalizedProgram &&
+        row['الدرجة'] === normalizedDegree &&
+        row['القسم'] === normalizedDept
+    );
+}
+
+function createStudySystemBucket() {
+    return {
+        saudiMale: null,
+        saudiFemale: null,
+        saudiTotal: null,
+        nonSaudiMale: null,
+        nonSaudiFemale: null,
+        nonSaudiTotal: null,
+        total: null
+    };
+}
+
+function buildStudySystemBreakdown(detailRows, dataRow) {
+    const regular = createStudySystemBucket();
+    const remote = createStudySystemBucket();
+
+    const applyCounts = (bucket, rows) => {
+        const saudiRows = rows.filter(row => normalizeArabicText(row['الجنسية']).includes('سعود'));
+        const nonSaudiRows = rows.filter(row => !normalizeArabicText(row['الجنسية']).includes('سعود'));
+        const countGender = (subset, marker) => subset.filter(row => normalizeArabicText(row['الجنس']).includes(marker)).length;
+
+        bucket.saudiMale = countGender(saudiRows, 'ذكر');
+        bucket.saudiFemale = countGender(saudiRows, 'أنث');
+        bucket.saudiTotal = saudiRows.length;
+        bucket.nonSaudiMale = countGender(nonSaudiRows, 'ذكر');
+        bucket.nonSaudiFemale = countGender(nonSaudiRows, 'أنث');
+        bucket.nonSaudiTotal = nonSaudiRows.length;
+        bucket.total = rows.length;
+    };
+
+    if (detailRows.length) {
+        const regularRows = detailRows.filter(row => {
+            const studyType = normalizeArabicText(row['نوع_الدراسة']);
+            return !studyType || studyType.includes('منتظم') || studyType.includes('انتظام');
+        });
+        const remoteRows = detailRows.filter(row => normalizeArabicText(row['نوع_الدراسة']).includes('عن بعد'));
+
+        applyCounts(regular, regularRows);
+        applyCounts(remote, remoteRows);
+        return { regular, remote, source: 'detail' };
+    }
+
+    if (dataRow) {
+        regular.saudiTotal = Number.isFinite(dataRow.students_saudi) ? dataRow.students_saudi : null;
+        regular.nonSaudiTotal = Number.isFinite(dataRow.students_international) ? dataRow.students_international : null;
+        regular.total = Number.isFinite(dataRow.students_total) ? dataRow.students_total : null;
+        remote.total = 0;
+        return { regular, remote, source: 'aggregate' };
+    }
+
+    return { regular, remote, source: 'none' };
+}
+
+function buildProgramYearSnapshot(prog, year, branch = ALL_BRANCH_FILTER_VALUE, dataOverride = null) {
+    const dataRow = dataOverride || buildProgramDisplayData(prog, year, branch);
+    const teachingSupport = getTeachingSupportForProgramYear(prog, year, branch);
+    const detailRows = getStudentDetailRowsForProgramYear(prog, year);
+
+    const internationalMale = detailRows.length
+        ? detailRows.filter(row =>
+            !normalizeArabicText(row['الجنسية']).includes('سعود') &&
+            normalizeArabicText(row['الجنس']).includes('ذكر')
+        ).length
+        : null;
+    const internationalFemale = detailRows.length
+        ? detailRows.filter(row =>
+            !normalizeArabicText(row['الجنسية']).includes('سعود') &&
+            normalizeArabicText(row['الجنس']).includes('أنث')
+        ).length
+        : null;
+
+    const ratioValue = dataRow && getFacultyBaseForRatio(dataRow) > 0 && dataRow.students_total > 0
+        ? (dataRow.students_total / getFacultyBaseForRatio(dataRow))
+        : null;
+
+    return {
+        year,
+        dataRow,
+        teachingSupport,
+        detailRows,
+        studySystem: buildStudySystemBreakdown(detailRows, dataRow),
+        studentsNewTotal: dataRow ? (Number(dataRow.students_new) || 0) : null,
+        studentsTotal: dataRow ? (Number(dataRow.students_total) || 0) : null,
+        studentsMale: dataRow ? (Number(dataRow.students_male) || 0) : null,
+        studentsFemale: dataRow ? (Number(dataRow.students_female) || 0) : null,
+        internationalTotal: dataRow ? (Number(dataRow.students_international) || 0) : null,
+        internationalMale,
+        internationalFemale,
+        avgStudentsPerSection: teachingSupport?.avgStudentsPerSection ?? null,
+        avgMaleStudentsPerSection: teachingSupport?.avgMaleStudentsPerSection ?? null,
+        avgFemaleStudentsPerSection: teachingSupport?.avgFemaleStudentsPerSection ?? null,
+        studentFacultyRatioValue: ratioValue,
+        graduatesTotal: dataRow ? (Number(dataRow.graduates_total) || 0) : null,
+        employmentEmployedCount: dataRow && Number.isFinite(Number(dataRow.employment_employed_count))
+            ? Number(dataRow.employment_employed_count) : null,
+        employmentRate: dataRow?.employment_rate ?? null,
+        employmentSample: dataRow ? (Number(dataRow.employment_rate_sample) || 0) : 0,
+        facultyRanks: teachingSupport?.facultyRanks || {},
+        facultyCount: teachingSupport?.facultyCount ?? null,
+        facultyAvgLoad: teachingSupport?.facultyAvgLoad ?? null
+    };
+}
+
+function buildSnapshotPoints(snapshots, selector) {
+    return (snapshots || [])
+        .map(snapshot => ({ year: snapshot.year, value: selector(snapshot) }))
+        .filter(point => Number.isFinite(point.value));
+}
+
+function formatSelfStudyCountCell(value) {
+    return Number.isFinite(value) ? fmtNum(Math.round(value)) : '—';
+}
+
+function formatSelfStudyDecimalCell(value, frac = 1) {
+    return Number.isFinite(value) ? fmtNumFlex(value, frac) : '—';
+}
+
+function formatSelfStudyPercentCell(value) {
+    return Number.isFinite(value) ? `${value.toFixed(1)}%` : '—';
+}
+
+function formatSelfStudyRatioCell(value, projected = false) {
+    if (!Number.isFinite(value)) return '—';
+    if (projected) {
+        const rounded = roundToNearestFive(value);
+        return Number.isFinite(rounded) ? `1:${fmtNum(rounded)}` : '—';
+    }
+    return `1:${fmtNumFlex(value, 1)}`;
+}
+
+function buildSelfStudyReport(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
+    const normalizedBranch = normalizeBranchName(branch);
+    const trendYears = [year - 2, year - 1, year];
+    const trendSnapshots = trendYears.map(targetYear => buildProgramYearSnapshot(prog, targetYear, normalizedBranch));
+    const trendMap = Object.fromEntries(trendSnapshots.map(snapshot => [snapshot.year, snapshot]));
+    const currentSnapshot = trendMap[year];
+    const projectedYear = year + 1;
+
+    const projected = {
+        studentsNewTotal: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.studentsNewTotal)),
+        studentsTotal: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.studentsTotal)),
+        studentsMale: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.studentsMale)),
+        studentsFemale: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.studentsFemale)),
+        internationalTotal: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.internationalTotal)),
+        internationalMale: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.internationalMale)),
+        internationalFemale: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.internationalFemale)),
+        avgStudentsPerSection: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.avgStudentsPerSection)),
+        avgMaleStudentsPerSection: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.avgMaleStudentsPerSection)),
+        avgFemaleStudentsPerSection: estimateNextRoundedCount(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.avgFemaleStudentsPerSection)),
+        studentFacultyRatioValue: estimateNextValue(buildSnapshotPoints(trendSnapshots, snapshot => snapshot.studentFacultyRatioValue))
+    };
+
+    const graduatesYears = [year - 3, year - 2, year - 1];
+    const graduateSnapshots = graduatesYears.map(targetYear => buildProgramYearSnapshot(prog, targetYear, normalizedBranch));
+    const facultyRanks = currentSnapshot?.facultyRanks || {};
+    const facultyDataAvailable = Number.isFinite(currentSnapshot?.facultyCount) || Object.keys(facultyRanks).length > 0;
+    const facultyGroupDefinitions = [
+        { group: 'أعضاء هيئة التدريس', ranks: ['أستاذ', 'أستاذ مشارك', 'أستاذ مساعد', 'متعاون'] },
+        { group: 'هيئة التدريس من غير حملة الدكتوراه', ranks: ['محاضر', 'معيد', 'مدرس'] }
+    ];
+    const allFacultyRanks = [...new Set([
+        ...facultyGroupDefinitions.flatMap(item => item.ranks),
+        ...Object.keys(facultyRanks)
+    ])];
+    const aggregateFacultyRanks = ranks => {
+        const aggregate = createFacultyRankAggregate();
+        (ranks || []).forEach(rank => mergeFacultyRankAggregate(aggregate, facultyRanks[rank]));
+        return aggregate;
+    };
+    const formatFacultyLoadCell = (sum, count) => {
+        if (!facultyDataAvailable || !Number.isFinite(sum) || !Number.isFinite(count) || count <= 0) return '—';
+        return formatSelfStudyDecimalCell(sum / count);
+    };
+    const buildFacultyRow = (group, label, stats) => {
+        const info = stats || null;
+        return {
+            group,
+            label,
+            values: [
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.saudiMaleCount ?? 0) : null),
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.saudiFemaleCount ?? 0) : null),
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.saudiCount ?? 0) : null),
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.nonSaudiMaleCount ?? 0) : null),
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.nonSaudiFemaleCount ?? 0) : null),
+                formatSelfStudyCountCell(facultyDataAvailable ? (info?.nonSaudiCount ?? 0) : null),
+                formatFacultyLoadCell(info?.maleLoadSum, info?.maleLoadCount),
+                formatFacultyLoadCell(info?.femaleLoadSum, info?.femaleLoadCount),
+                formatFacultyLoadCell(info?.loadSum, info?.count)
+            ]
+        };
+    };
+    const facultyRows = [];
+    facultyGroupDefinitions.forEach(groupInfo => {
+        groupInfo.ranks.forEach((rank, index) => {
+            facultyRows.push(buildFacultyRow(index === 0 ? groupInfo.group : '', rank, facultyRanks[rank] || null));
+        });
+        facultyRows.push(buildFacultyRow('', 'الإجمالي', aggregateFacultyRanks(groupInfo.ranks)));
+    });
+    const facultyOverall = aggregateFacultyRanks(allFacultyRanks);
+
+    const notes = [
+        'عمود المتوقع بعد عام تقديري، مبني على الاتجاه الفعلي ومقرب لأقرب 5.',
+        'صف عدد الطلاب المخطط التحاقهم بالبرنامج يعتمد على عدد المستجدين الفعلي عند غياب ملف الهدف السنوي.',
+        'بيانات نظام الدراسة والتفصيل بالجنسية تعتمد على ملف الطلاب التفصيلي، والمتاح حاليًا لعامي 1445 و1446.',
+        'إحصاءات الشعب وعبء التدريس مبنية على سجلات النشاط التدريسي المرتبطة بمقررات البرنامج.',
+        'جنسية أعضاء هيئة التدريس وجنسهم يعتمدان على ملف الأعضاء المحدث داخل مشروع الأنشطة.',
+        'متوسط عبء التدريس للذكور والإناث في جدول هيئة التدريس يعتمد على متوسط العبء الفعلي لأعضاء هيئة التدريس المصنفين بهذا الجنس داخل البرنامج.'
+    ];
+    if (normalizedBranch && normalizedBranch !== ALL_BRANCH_FILTER_VALUE) {
+        notes.unshift(`الفرع المختار: ${normalizedBranch}. تتغير بيانات هيئة التدريس والنشر العلمي ونسبة الطلاب إلى أعضاء هيئة التدريس بحسب هذا الفرع، بينما تبقى بيانات الطلاب والخريجين على مستوى البرنامج لعدم توفر حقل الفرع في ملفاتها الحالية.`);
+    }
+    if (facultyDataAvailable && facultyOverall.unknownNationalityCount > 0) {
+        notes.push(`يوجد ${fmtNum(facultyOverall.unknownNationalityCount)} عضو/أعضاء هيئة تدريس بلا جنسية مصنفة في الملف الحالي، ويظهرون ضمن الإجمالي فقط.`);
+    }
+    if (facultyDataAvailable && facultyOverall.unknownGenderCount > 0) {
+        notes.push(`يوجد ${fmtNum(facultyOverall.unknownGenderCount)} عضو/أعضاء هيئة تدريس بلا جنس مصنف في الملف الحالي، ويظهرون ضمن الإجمالي فقط.`);
+    }
+
+    return {
+        title: 'أرقام الدراسة الذاتية',
+        notes,
+        enrollmentTable: {
+            title: '1.9.1 تطور أعداد الطلاب الملتحقين بالبرنامج',
+            headers: [
+                'البند',
+                'الفئة',
+                `قبل عامين (${fmtYear(year - 2)})`,
+                `العام الماضي (${fmtYear(year - 1)})`,
+                `العام الحالي (${fmtYear(year)})`,
+                `المتوقع بعد عام (${fmtYear(projectedYear)})`
+            ],
+            rows: [
+                {
+                    group: 'عدد الطلاب المخطط التحاقهم بالبرنامج',
+                    label: 'ذكور',
+                    values: ['—', '—', '—', '—']
+                },
+                {
+                    group: 'عدد الطلاب المخطط التحاقهم بالبرنامج',
+                    label: 'إناث',
+                    values: ['—', '—', '—', '—']
+                },
+                {
+                    group: 'عدد الطلاب المخطط التحاقهم بالبرنامج',
+                    label: 'الإجمالي',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.studentsNewTotal),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.studentsNewTotal),
+                        formatSelfStudyCountCell(trendMap[year]?.studentsNewTotal),
+                        formatSelfStudyCountCell(projected.studentsNewTotal)
+                    ]
+                },
+                {
+                    group: 'العدد الكلي للطلاب الملتحقين بالبرنامج',
+                    label: 'ذكور',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.studentsMale),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.studentsMale),
+                        formatSelfStudyCountCell(trendMap[year]?.studentsMale),
+                        formatSelfStudyCountCell(projected.studentsMale)
+                    ]
+                },
+                {
+                    group: 'العدد الكلي للطلاب الملتحقين بالبرنامج',
+                    label: 'إناث',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.studentsFemale),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.studentsFemale),
+                        formatSelfStudyCountCell(trendMap[year]?.studentsFemale),
+                        formatSelfStudyCountCell(projected.studentsFemale)
+                    ]
+                },
+                {
+                    group: 'العدد الكلي للطلاب الملتحقين بالبرنامج',
+                    label: 'الإجمالي',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.studentsTotal),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.studentsTotal),
+                        formatSelfStudyCountCell(trendMap[year]?.studentsTotal),
+                        formatSelfStudyCountCell(projected.studentsTotal)
+                    ]
+                },
+                {
+                    group: 'عدد الطلاب الدوليين الملتحقين بالبرنامج',
+                    label: 'ذكور',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.internationalMale),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.internationalMale),
+                        formatSelfStudyCountCell(trendMap[year]?.internationalMale),
+                        formatSelfStudyCountCell(projected.internationalMale)
+                    ]
+                },
+                {
+                    group: 'عدد الطلاب الدوليين الملتحقين بالبرنامج',
+                    label: 'إناث',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.internationalFemale),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.internationalFemale),
+                        formatSelfStudyCountCell(trendMap[year]?.internationalFemale),
+                        formatSelfStudyCountCell(projected.internationalFemale)
+                    ]
+                },
+                {
+                    group: 'عدد الطلاب الدوليين الملتحقين بالبرنامج',
+                    label: 'الإجمالي',
+                    values: [
+                        formatSelfStudyCountCell(trendMap[year - 2]?.internationalTotal),
+                        formatSelfStudyCountCell(trendMap[year - 1]?.internationalTotal),
+                        formatSelfStudyCountCell(trendMap[year]?.internationalTotal),
+                        formatSelfStudyCountCell(projected.internationalTotal)
+                    ]
+                },
+                {
+                    group: 'متوسط عدد الطلاب في الشعب الدراسية',
+                    label: 'ذكور',
+                    values: [
+                        formatSelfStudyDecimalCell(trendMap[year - 2]?.avgMaleStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year - 1]?.avgMaleStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year]?.avgMaleStudentsPerSection),
+                        formatSelfStudyCountCell(projected.avgMaleStudentsPerSection)
+                    ]
+                },
+                {
+                    group: 'متوسط عدد الطلاب في الشعب الدراسية',
+                    label: 'إناث',
+                    values: [
+                        formatSelfStudyDecimalCell(trendMap[year - 2]?.avgFemaleStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year - 1]?.avgFemaleStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year]?.avgFemaleStudentsPerSection),
+                        formatSelfStudyCountCell(projected.avgFemaleStudentsPerSection)
+                    ]
+                },
+                {
+                    group: 'متوسط عدد الطلاب في الشعب الدراسية',
+                    label: 'الإجمالي',
+                    values: [
+                        formatSelfStudyDecimalCell(trendMap[year - 2]?.avgStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year - 1]?.avgStudentsPerSection),
+                        formatSelfStudyDecimalCell(trendMap[year]?.avgStudentsPerSection),
+                        formatSelfStudyCountCell(projected.avgStudentsPerSection)
+                    ]
+                },
+                {
+                    group: 'نسبة عدد الطلاب إلى هيئة التدريس',
+                    label: 'ذكور',
+                    values: ['—', '—', '—', '—']
+                },
+                {
+                    group: 'نسبة عدد الطلاب إلى هيئة التدريس',
+                    label: 'إناث',
+                    values: ['—', '—', '—', '—']
+                },
+                {
+                    group: 'نسبة عدد الطلاب إلى هيئة التدريس',
+                    label: 'الإجمالي',
+                    values: [
+                        formatSelfStudyRatioCell(trendMap[year - 2]?.studentFacultyRatioValue),
+                        formatSelfStudyRatioCell(trendMap[year - 1]?.studentFacultyRatioValue),
+                        formatSelfStudyRatioCell(trendMap[year]?.studentFacultyRatioValue),
+                        formatSelfStudyRatioCell(projected.studentFacultyRatioValue, true)
+                    ]
+                }
+            ]
+        },
+        studySystemTable: {
+            title: '2.9.1 تصنيف الطلاب حسب نظام الدراسة والجنسية',
+            headers: [
+                'التصنيف',
+                'سعودي (ذكور)',
+                'سعودي (إناث)',
+                'سعودي (الإجمالي)',
+                'غير سعودي (ذكور)',
+                'غير سعودي (إناث)',
+                'غير سعودي (الإجمالي)',
+                'الإجمالي'
+            ],
+            rows: [
+                {
+                    label: 'انتظام',
+                    values: [
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.saudiMale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.saudiFemale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.saudiTotal),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.nonSaudiMale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.nonSaudiFemale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.nonSaudiTotal),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.regular?.total)
+                    ]
+                },
+                {
+                    label: 'تعليم عن بعد',
+                    values: [
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.saudiMale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.saudiFemale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.saudiTotal),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.nonSaudiMale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.nonSaudiFemale),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.nonSaudiTotal),
+                        formatSelfStudyCountCell(currentSnapshot?.studySystem?.remote?.total)
+                    ]
+                }
+            ],
+            source: currentSnapshot?.studySystem?.source || 'none'
+        },
+        graduatesTable: {
+            title: '3.9.1 تطور أعداد خريجي البرنامج',
+            headers: [
+                'البند',
+                `قبل ثلاثة أعوام (${fmtYear(year - 3)})`,
+                `قبل عامين (${fmtYear(year - 2)})`,
+                `العام الماضي (${fmtYear(year - 1)})`
+            ],
+            rows: [
+                {
+                    group: 'أعداد الخريجين',
+                    label: prog.degree,
+                    values: graduateSnapshots.map(snapshot => formatSelfStudyCountCell(snapshot.graduatesTotal))
+                },
+                {
+                    group: 'أعداد الخريجين',
+                    label: 'المجموع',
+                    values: graduateSnapshots.map(snapshot => formatSelfStudyCountCell(snapshot.graduatesTotal))
+                },
+                {
+                    group: 'توظيف الخريجين أو التحاقهم بالدراسات العليا',
+                    label: 'عدد الموظفين أو الملتحقين',
+                    values: graduateSnapshots.map(snapshot => formatSelfStudyCountCell(snapshot.employmentEmployedCount))
+                },
+                {
+                    group: 'توظيف الخريجين أو التحاقهم بالدراسات العليا',
+                    label: 'النسبة إلى إجمالي الخريجين',
+                    values: graduateSnapshots.map(snapshot => formatSelfStudyPercentCell(snapshot.employmentRate))
+                }
+            ]
+        },
+        facultyTable: {
+            title: '4.9.1 أعداد هيئة التدريس',
+            caption: facultyDataAvailable
+                ? 'يعرض الجدول أعداد أعضاء هيئة التدريس حسب الرتبة والجنسية والجنس، ويعرض متوسط العبء التدريسي للذكور والإناث والإجمالي.'
+                : 'لا تتوفر لهذا البرنامج في هذه السنة سجلات ربط كافية لإظهار تفصيل أعضاء هيئة التدريس والعبء التدريسي.',
+            headers: ['الفئة', 'الرتبة', 'سعودي (ذكور)', 'سعودي (إناث)', 'سعودي (الإجمالي)', 'غير سعودي (ذكور)', 'غير سعودي (إناث)', 'غير سعودي (الإجمالي)', 'متوسط عبء التدريس (ذكور)', 'متوسط عبء التدريس (إناث)', 'متوسط عبء التدريس (الإجمالي)'],
+            rows: [
+                ...facultyRows,
+                buildFacultyRow('الإجمالي العام', 'الإجمالي الكلي', facultyOverall)
+            ]
+        }
+    };
+}
+
+function renderSelfStudyTable(title, headers, rows, caption = '') {
+    return `
+        <div class="self-study-section">
+            <h4>${title}</h4>
+            ${caption ? `<p class="self-study-caption">${caption}</p>` : ''}
+            <div class="table-wrap">
+                <table class="data-table self-study-table">
+                    <thead>
+                        <tr>${headers.map(header => `<th>${header}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(row => `
+                            <tr>
+                                ${row.group != null ? `<td class="self-study-group">${row.group}</td>` : ''}
+                                <td class="self-study-label">${row.label}</td>
+                                ${row.values.map(value => `<td>${value}</td>`).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function renderSelfStudyReport(report) {
+    if (!report) return '<p class="self-study-empty">لا توجد بيانات متاحة لهذا القسم.</p>';
+    const notesHtml = report.notes.map(note => `<li>${note}</li>`).join('');
+    const studySystemSource = report.studySystemTable.source === 'detail'
+        ? 'يعتمد هذا الجدول على ملف الطلاب التفصيلي.'
+        : (report.studySystemTable.source === 'aggregate'
+            ? 'يظهر هذا الجدول الإجماليات المتاحة فقط لعدم توفر الملف التفصيلي لهذه السنة.'
+            : 'لا توجد بيانات طلاب تفصيلية لهذه السنة.');
+
+    return `
+        <div class="self-study-notes">
+            <ul>${notesHtml}</ul>
+        </div>
+        ${renderSelfStudyTable(report.enrollmentTable.title, report.enrollmentTable.headers, report.enrollmentTable.rows, report.enrollmentTable.caption)}
+        <div class="self-study-section">
+            <h4>${report.studySystemTable.title}</h4>
+            <p class="self-study-caption">${studySystemSource}</p>
+            <div class="table-wrap">
+                <table class="data-table self-study-table">
+                    <thead>
+                        <tr>${report.studySystemTable.headers.map(header => `<th>${header}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody>
+                        ${report.studySystemTable.rows.map(row => `
+                            <tr>
+                                <td class="self-study-label">${row.label}</td>
+                                ${row.values.map(value => `<td>${value}</td>`).join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ${renderSelfStudyTable(report.graduatesTable.title, report.graduatesTable.headers, report.graduatesTable.rows, report.graduatesTable.caption)}
+        ${renderSelfStudyTable(report.facultyTable.title, report.facultyTable.headers, report.facultyTable.rows, report.facultyTable.caption)}
+    `;
+}
+
+function getSelfStudyExportRows(report) {
+    if (!report) return [];
+    const rows = [
+        [report.title],
+        ['ملاحظات'],
+        ...report.notes.map(note => [note]),
+        []
+    ];
+
+    const pushTable = (table) => {
+        rows.push([table.title]);
+        if (table.caption) rows.push([table.caption]);
+        rows.push(table.headers);
+        table.rows.forEach(row => rows.push([row.group || '', row.label, ...row.values]));
+        rows.push([]);
+    };
+
+    pushTable(report.enrollmentTable);
+    rows.push([report.studySystemTable.title]);
+    rows.push(report.studySystemTable.headers);
+    report.studySystemTable.rows.forEach(row => rows.push([row.label, ...row.values]));
+    rows.push([]);
+    pushTable(report.graduatesTable);
+    pushTable(report.facultyTable);
+    return rows;
 }
 
 // ========================================
@@ -2131,10 +3304,26 @@ function renderProgramsTable(items, year) {
 // ========================================
 // تفاصيل البرنامج
 // ========================================
+function populateProgramBranchFilter() {
+    const branchSelect = document.getElementById('prog-branch');
+    if (!branchSelect) return;
+    const currentValue = branchSelect.value || ALL_BRANCH_FILTER_VALUE;
+    branchSelect.innerHTML = buildBranchOptionsHtml();
+    branchSelect.value = availableFacultyBranches.includes(currentValue) ? currentValue : ALL_BRANCH_FILTER_VALUE;
+    branchSelect.disabled = false;
+}
+
+function getProgramBranchSelection() {
+    const rawValue = document.getElementById('prog-branch')?.value || ALL_BRANCH_FILTER_VALUE;
+    return normalizeBranchName(rawValue) || ALL_BRANCH_FILTER_VALUE;
+}
+
 function initProgramView() {
     const sel = document.getElementById('prog-select');
+    const branchSel = document.getElementById('prog-branch');
     sel.innerHTML = '<option value="">-- اختر البرنامج --</option>' +
         programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree})</option>`).join('');
+    populateProgramBranchFilter();
 
     sel.addEventListener('change', () => {
         const v = sel.value;
@@ -2149,6 +3338,14 @@ function initProgramView() {
 
     document.getElementById('prog-year').addEventListener('change', e => {
         document.getElementById('prog-show').disabled = !e.target.value;
+    });
+
+    branchSel?.addEventListener('change', () => {
+        const idx = parseInt(document.getElementById('prog-select').value, 10);
+        const year = parseInt(document.getElementById('prog-year').value, 10);
+        if (!Number.isNaN(idx) && !Number.isNaN(year)) {
+            showProgramDetail();
+        }
     });
 
     document.getElementById('prog-show').addEventListener('click', showProgramDetail);
@@ -2167,18 +3364,37 @@ function fillProgYears(idx) {
 function showProgramDetail() {
     const idx = parseInt(document.getElementById('prog-select').value);
     const year = parseInt(document.getElementById('prog-year').value);
+    const branch = getProgramBranchSelection();
     if (isNaN(idx) || isNaN(year)) return;
 
     const prog = programs[idx];
-    const d = prog.years[year];
+    const d = buildProgramDisplayData(prog, year, branch);
     if (!d) return;
 
-    currentProg = { prog, year, data: d };
+    const selfStudyReport = buildSelfStudyReport(prog, year, branch);
+    currentProg = {
+        prog,
+        year,
+        branch,
+        branchLabel: branch === ALL_BRANCH_FILTER_VALUE ? ALL_BRANCH_FILTER_LABEL : branch,
+        data: d,
+        selfStudyReport
+    };
 
     // Header
     document.getElementById('prog-badge').textContent = prog.degree;
     document.getElementById('prog-name').textContent = prog.name;
-    document.getElementById('prog-year-label').textContent = 'السنة: ' + fmtYear(year) + ' | القسم: ' + prog.dept;
+    document.getElementById('prog-year-label').textContent =
+        'السنة: ' + fmtYear(year) + ' | القسم: ' + prog.dept + ' | الفرع: ' + currentProg.branchLabel;
+    const scopeNote = document.getElementById('prog-scope-note');
+    if (scopeNote) {
+        if (branch === ALL_BRANCH_FILTER_VALUE) {
+            scopeNote.textContent = 'يعرض التقرير الحالي أرقام البرنامج على مستوى جميع الفروع.';
+        } else {
+            scopeNote.textContent = `الفرع المختار: ${branch}. تتغير بيانات هيئة التدريس والنشر العلمي ونسبة الطلاب إلى أعضاء هيئة التدريس بحسب الفرع، بينما تبقى بقية بيانات الطلاب والخريجين على مستوى البرنامج لعدم توفر حقل الفرع في مصادرها الحالية.`;
+        }
+        scopeNote.classList.remove('hidden');
+    }
 
     // Stats
     const stats = [];
@@ -2191,10 +3407,14 @@ function showProgramDetail() {
     if (d.students_retained > 0 || d.prev_new_count > 0) stats.push({icon:'🔄', label:'استبقاء الدفعة السابقة', value: d.prev_new_count > 0 ? fmtNum(d.students_retained) + ' من ' + fmtNum(d.prev_new_count) : fmtNum(d.students_retained), color:'#8b5cf6'});
     if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجين', value: fmtNum(d.graduates_total), color:'#10b981'});
     if (d.graduates_ontime > 0 || d.new_4_ago_count > 0) stats.push({icon:'⏱️', label:'خريجو الدفعة بالوقت', value: d.new_4_ago_count > 0 ? fmtNum(d.graduates_ontime) + ' من ' + fmtNum(d.new_4_ago_count) : fmtNum(d.graduates_ontime), color:'#0d8e8e'});
-    if (d.sections_total > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(d.sections_total), color:'#6b7280'});
+    const branchTeachingSupport = getTeachingSupportForProgramYear(prog, year, branch);
+    const sectionsCount = branch !== ALL_BRANCH_FILTER_VALUE && Number.isFinite(branchTeachingSupport?.totalSections)
+        ? branchTeachingSupport.totalSections
+        : d.sections_total;
+    if (sectionsCount > 0) stats.push({icon:'🏛️', label:'الشعب', value: fmtNum(sectionsCount), color:'#6b7280'});
     const facultyBase = getFacultyBaseForRatio(d);
     if (facultyBase > 0) {
-        const facultyLabel = d.faculty_ratio_source === 'teaching_fte'
+        const facultyLabel = String(d.faculty_ratio_source || '').startsWith('teaching_fte')
             ? 'هيئة التدريس (مكافئ FTE)'
             : 'هيئة التدريس';
         stats.push({icon:'👨‍🏫', label: facultyLabel, value: fmtNumFlex(facultyBase), color:'#7c3aed'});
@@ -2242,6 +3462,9 @@ function showProgramDetail() {
             </div>`;
         }).join('');
 
+    const selfStudyWrap = document.getElementById('self-study-wrap');
+    if (selfStudyWrap) selfStudyWrap.innerHTML = renderSelfStudyReport(selfStudyReport);
+
     // Trend chart
     renderTrendChart(prog);
 
@@ -2283,12 +3506,24 @@ function renderTrendChart(prog) {
 // ========================================
 // المقارنة
 // ========================================
+function populateCompareBranchFilters() {
+    ['a', 'b', 'c'].forEach(slot => {
+        const select = document.getElementById(`cmp-${slot}-branch`);
+        if (!select) return;
+        const currentValue = select.value || ALL_BRANCH_FILTER_VALUE;
+        select.innerHTML = buildBranchOptionsHtml();
+        select.value = availableFacultyBranches.includes(currentValue) ? currentValue : ALL_BRANCH_FILTER_VALUE;
+        select.disabled = false;
+    });
+}
+
 function initCompare() {
     const progOpts = '<option value="">-- اختر البرنامج --</option>' +
         programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree}) - ${p.dept}</option>`).join('');
     ['cmp-a-prog','cmp-b-prog','cmp-c-prog'].forEach(id => {
         document.getElementById(id).innerHTML = progOpts;
     });
+    populateCompareBranchFilters();
 
     ['a','b','c'].forEach(slot => {
         document.getElementById(`cmp-${slot}-prog`).addEventListener('change', () => {
@@ -2297,6 +3532,10 @@ function initCompare() {
             updateCmpBtn();
         });
         document.getElementById(`cmp-${slot}-year`).addEventListener('change', () => {
+            document.getElementById('cmp-results').classList.add('hidden');
+            updateCmpBtn();
+        });
+        document.getElementById(`cmp-${slot}-branch`)?.addEventListener('change', () => {
             document.getElementById('cmp-results').classList.add('hidden');
             updateCmpBtn();
         });
@@ -2320,6 +3559,8 @@ function initCompare() {
         cYear.innerHTML = '<option value="">-- اختر السنة --</option>';
         cYear.disabled = true;
         cYear.value = '';
+        const cBranch = document.getElementById('cmp-c-branch');
+        if (cBranch) cBranch.value = ALL_BRANCH_FILTER_VALUE;
         document.getElementById('cmp-results').classList.add('hidden');
         updateCmpBtn();
     });
@@ -2353,6 +3594,7 @@ function populateCompareYears(slot) {
 function getCompareSelection(slot) {
     const progValue = document.getElementById(`cmp-${slot}-prog`).value;
     const yearValue = document.getElementById(`cmp-${slot}-year`).value;
+    const branchValue = normalizeBranchName(document.getElementById(`cmp-${slot}-branch`)?.value || ALL_BRANCH_FILTER_VALUE) || ALL_BRANCH_FILTER_VALUE;
     const hasProgram = progValue !== '';
     const hasYear = yearValue !== '';
     if (!hasProgram || !hasYear) return null;
@@ -2360,7 +3602,16 @@ function getCompareSelection(slot) {
     const year = parseInt(yearValue, 10);
     const program = programs[programIndex];
     if (!program || !program.years[year]) return null;
-    return { slot, programIndex, program, year, data: program.years[year] };
+    const data = buildProgramDisplayData(program, year, branchValue);
+    return {
+        slot,
+        programIndex,
+        program,
+        year,
+        branch: branchValue,
+        branchLabel: branchValue === ALL_BRANCH_FILTER_VALUE ? ALL_BRANCH_FILTER_LABEL : branchValue,
+        data
+    };
 }
 
 function updateCmpBtn() {
@@ -2386,7 +3637,10 @@ function getIndicatorLabel(indicator) {
 }
 
 function compareShortLabel(entry) {
-    return `${entry.program.name} - ${fmtYear(entry.year)}`;
+    const branchSuffix = entry.branch && entry.branch !== ALL_BRANCH_FILTER_VALUE
+        ? ` - ${entry.branch}`
+        : '';
+    return `${entry.program.name} - ${fmtYear(entry.year)}${branchSuffix}`;
 }
 
 function buildComparisonModel(entries) {
@@ -2422,6 +3676,13 @@ function formatDiffCell(diff) {
     return '<span class="diff-same">0</span>';
 }
 
+function buildBranchOptionsHtml() {
+    return [
+        `<option value="${ALL_BRANCH_FILTER_VALUE}">${ALL_BRANCH_FILTER_LABEL}</option>`,
+        ...availableFacultyBranches.map(branch => `<option value="${branch}">${branch}</option>`)
+    ].join('');
+}
+
 function showComparison() {
     const selections = [getCompareSelection('a'), getCompareSelection('b')];
     if (compareThirdEnabled) selections.push(getCompareSelection('c'));
@@ -2429,7 +3690,7 @@ function showComparison() {
 
     const entries = selections.map(sel => ({
         ...sel,
-        label: `${sel.program.name} (${sel.program.degree}) - ${fmtYear(sel.year)}`,
+        label: `${sel.program.name} (${sel.program.degree}) - ${fmtYear(sel.year)}${sel.branch !== ALL_BRANCH_FILTER_VALUE ? ` - ${sel.branchLabel}` : ''}`,
         shortLabel: compareShortLabel(sel),
         kpi: calcKPIs(sel.data, sel.program.degree)
     }));
@@ -2559,6 +3820,20 @@ async function exportSectionAsPDF(elementId, filename) {
     doc.save(filename);
 }
 
+async function withSelfStudyAccordionOpen(task) {
+    const accordion = document.getElementById('self-study-details');
+    const wasOpen = accordion ? accordion.open : false;
+    if (accordion) {
+        accordion.open = true;
+        await new Promise(resolve => requestAnimationFrame(resolve));
+    }
+    try {
+        return await task();
+    } finally {
+        if (accordion) accordion.open = wasOpen;
+    }
+}
+
 function getProgramIndicatorRows() {
     if (!currentProg || currentProg.cmp) return [];
     const kpi = calcKPIs(currentProg.data, currentProg.prog.degree);
@@ -2571,36 +3846,72 @@ function getProgramIndicatorRows() {
 
 async function exportPDF() {
     if (!currentProg || currentProg.cmp) return;
-    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.pdf`;
-    await exportSectionAsPDF('prog-results', filename);
+    const branchSuffix = currentProg.branch && currentProg.branch !== ALL_BRANCH_FILTER_VALUE
+        ? `-${safeFileName(currentProg.branch)}`
+        : '';
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}${branchSuffix}.pdf`;
+    await withSelfStudyAccordionOpen(() => exportSectionAsPDF('prog-results', filename));
 }
 
 function exportExcel() {
     if (!currentProg || currentProg.cmp) return;
-    const rows = [
+    const indicatorRows = [
         ['تقرير مؤشرات الأداء'],
         ['البرنامج', currentProg.prog.name],
         ['الدرجة', currentProg.prog.degree],
         ['السنة', fmtYear(currentProg.year)],
+        ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
         [],
         ['المؤشر', 'القيمة', 'الوحدة'],
         ...getProgramIndicatorRows()
     ];
-    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const ws = XLSX.utils.aoa_to_sheet(indicatorRows);
     ws['!cols'] = [{ wch: 42 }, { wch: 18 }, { wch: 12 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'المؤشرات');
-    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.xlsx`;
+    if (currentProg.selfStudyReport) {
+        const selfStudyRows = getSelfStudyExportRows(currentProg.selfStudyReport);
+        const selfStudySheet = XLSX.utils.aoa_to_sheet(selfStudyRows);
+        selfStudySheet['!cols'] = [
+            { wch: 28 },
+            { wch: 24 },
+            { wch: 16 },
+            { wch: 16 },
+            { wch: 16 },
+            { wch: 18 },
+            { wch: 18 },
+            { wch: 18 },
+            { wch: 18 },
+            { wch: 18 },
+            { wch: 18 }
+        ];
+        XLSX.utils.book_append_sheet(wb, selfStudySheet, 'الدراسة الذاتية');
+    }
+    const branchSuffix = currentProg.branch && currentProg.branch !== ALL_BRANCH_FILTER_VALUE
+        ? `-${safeFileName(currentProg.branch)}`
+        : '';
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}${branchSuffix}.xlsx`;
     XLSX.writeFile(wb, filename);
 }
 
 function exportCSV() {
     if (!currentProg || currentProg.cmp) return;
     const rows = [
+        ['تقرير مؤشرات الأداء'],
+        ['البرنامج', currentProg.prog.name],
+        ['الدرجة', currentProg.prog.degree],
+        ['السنة', fmtYear(currentProg.year)],
+        ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
+        [],
         ['المؤشر', 'القيمة', 'الوحدة'],
-        ...getProgramIndicatorRows()
+        ...getProgramIndicatorRows(),
+        [],
+        ...getSelfStudyExportRows(currentProg.selfStudyReport)
     ];
-    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}.csv`;
+    const branchSuffix = currentProg.branch && currentProg.branch !== ALL_BRANCH_FILTER_VALUE
+        ? `-${safeFileName(currentProg.branch)}`
+        : '';
+    const filename = `مؤشرات-${safeFileName(currentProg.prog.name)}-${fmtYear(currentProg.year)}${branchSuffix}.csv`;
     downloadCSV(filename, rows);
 }
 
@@ -3577,6 +4888,11 @@ function analyticsCountByStatus(records, keywords) {
     });
 }
 
+function getAnalyticsSelectedBranchValue() {
+    const rawValue = document.getElementById('analytics-filter-branch')?.value || '';
+    return normalizeBranchName(rawValue);
+}
+
 function getAnalyticsSourceDefinitions() {
     return {
         programs: {
@@ -3595,6 +4911,7 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'dept', label: 'القسم', getValue: row => row.Dept_aName },
                 { id: 'degree', label: 'الدرجة', getValue: row => row.Degree_aName },
                 { id: 'program', label: 'البرنامج', getValue: row => row.Major_aName },
+                { id: 'branch', label: 'الفرع', getValue: () => '', options: () => availableFacultyBranches },
             ],
             groups: [
                 { id: 'year', label: 'السنة', getValue: row => parseInt(row.Semester, 10) || null, format: value => fmtYear(value), sort: 'numeric' },
@@ -4047,8 +5364,11 @@ function renderAnalyticsFilters(source) {
     const filtersWrap = document.getElementById('analytics-filters');
     const sourceRows = source.getRows();
     filtersWrap.innerHTML = source.filters.map(field => {
-        const values = [...new Set(sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean))]
-            .sort((a, b) => a.localeCompare(b, 'ar'));
+        const rawValues = typeof field.options === 'function'
+            ? field.options(sourceRows)
+            : [...new Set(sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean))];
+        const values = [...new Set((rawValues || []).filter(Boolean))]
+            .sort((a, b) => String(a).localeCompare(String(b), 'ar'));
         return `<div class="form-group">
             <label>${field.label}</label>
             <select id="analytics-filter-${field.id}">
@@ -4114,6 +5434,10 @@ function getAnalyticsFilteredRows(source) {
         const select = document.getElementById(`analytics-filter-${field.id}`);
         const wanted = String(select?.value || '').trim();
         if (!wanted) return;
+        if (source.key === 'programs' && field.id === 'branch') {
+            rows = rows.map(row => buildProgramDisplayDataFromRow(row, wanted));
+            return;
+        }
         rows = rows.filter(row => analyticsText(field.getValue(row), '') === wanted);
     });
 
@@ -4202,6 +5526,7 @@ function runAnalyticsReport() {
             return value ? `${field.label}: ${value}` : '';
         })
         .filter(Boolean);
+    const branchFilterValue = source.key === 'programs' ? getAnalyticsSelectedBranchValue() : '';
 
     const yearLabel = buildAnalyticsYearLabel(filteredRows, source);
     const searchText = String(document.getElementById('analytics-search')?.value || '').trim();
@@ -4287,7 +5612,7 @@ function runAnalyticsReport() {
         tableHeaders,
         tableRows,
         caption: '',
-        filenameBase: safeFileName(`الاستوديو-الإحصائي-${source.label}-${mode === 'summary' ? 'إجمالي' : 'تفصيلي'}`)
+        filenameBase: safeFileName(`الاستوديو-الإحصائي-${source.label}-${mode === 'summary' ? 'إجمالي' : 'تفصيلي'}${branchFilterValue ? `-${branchFilterValue}` : ''}`)
     };
     currentAnalyticsReport.caption = buildAnalyticsCaption(currentAnalyticsReport);
 

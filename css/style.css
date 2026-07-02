@@ -516,6 +516,13 @@ body.app-blocked { overflow: hidden; }
 }
 .btn-sm:hover { background: var(--primary); color: #fff; }
 .export-btns { display: flex; gap: 6px; }
+.helper-note {
+    width: 100%;
+    margin-top: -4px;
+    color: var(--text-light);
+    font-size: 0.82rem;
+    line-height: 1.7;
+}
 
 /* ============================
    تفاصيل البرنامج
@@ -603,6 +610,99 @@ body.app-blocked { overflow: hidden; }
 .kpi-unit { font-size: 0.72rem; color: var(--text-light); font-weight: 400; }
 .kpi-detail { font-size: 0.78rem; color: var(--accent); font-weight: 600; margin-top: 1px; }
 .kpi-sample { font-size: 0.68rem; color: var(--text-light); font-weight: 500; }
+
+.self-study-card {
+    margin-top: 20px;
+}
+.self-study-accordion summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+}
+.self-study-accordion summary::-webkit-details-marker {
+    display: none;
+}
+.self-study-summary-text h3 {
+    margin: 0;
+    border: none;
+    padding: 0;
+    font-size: 1.02rem;
+    color: var(--primary-dark);
+}
+.self-study-summary-text p {
+    margin: 4px 0 0;
+    font-size: 0.82rem;
+    color: var(--text-light);
+}
+.self-study-summary-hint {
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.self-study-accordion[open] .self-study-summary-hint::after {
+    content: ' المحتوى';
+}
+.self-study-accordion:not([open]) .self-study-summary-hint::after {
+    content: ' الجداول';
+}
+.self-study-accordion > div {
+    margin-top: 18px;
+}
+.self-study-notes {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+}
+.self-study-notes ul {
+    margin: 0;
+    padding-right: 18px;
+    color: var(--text);
+    font-size: 0.82rem;
+    line-height: 1.9;
+}
+.self-study-section + .self-study-section {
+    margin-top: 18px;
+}
+.self-study-section h4 {
+    margin: 0 0 10px;
+    font-size: 0.95rem;
+    color: var(--primary-dark);
+}
+.self-study-caption {
+    margin: 0 0 10px;
+    color: var(--text-light);
+    font-size: 0.8rem;
+}
+.self-study-table th {
+    position: static;
+    white-space: normal;
+    line-height: 1.5;
+}
+.self-study-table td {
+    vertical-align: top;
+}
+.self-study-group,
+.self-study-label {
+    font-weight: 700;
+    color: var(--primary-dark);
+}
+.self-study-group {
+    min-width: 180px;
+}
+.self-study-empty {
+    margin: 0;
+    color: var(--text-light);
+    font-size: 0.9rem;
+}
 
 /* ============================
    المقارنة
