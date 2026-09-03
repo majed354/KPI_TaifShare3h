@@ -69,6 +69,8 @@
             <button class="nav-btn active" data-view="dashboard">لوحة المعلومات</button>
             <button class="nav-btn" data-view="program">تفاصيل البرنامج</button>
             <button class="nav-btn" data-view="compare">المقارنة</button>
+            <button class="nav-btn" data-view="faculty">هيئة التدريس</button>
+            <button class="nav-btn" data-view="entrants">سجل المستجدين</button>
             <button class="nav-btn" data-view="graduates">سجل الخريجين</button>
             <button class="nav-btn" data-view="noncomplete">غير المكملين</button>
             <button class="nav-btn" data-view="student-categories">فئات الطلاب</button>
@@ -306,11 +308,125 @@
         </div>
     </section>
 
+    <!-- ============ أعضاء هيئة التدريس ============ -->
+    <section id="faculty-view" class="view">
+        <div class="view-top">
+            <h2>👨‍🏫 قائمة أعضاء هيئة التدريس</h2>
+            <p class="view-desc">قائمة عامي 1446 و1447 حسب المقر المسجل في ملف أعضاء هيئة التدريس.</p>
+        </div>
+
+        <div class="card filter-bar">
+            <div class="filter-row">
+                <div class="form-group">
+                    <label>السنة</label>
+                    <select id="faculty-year"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>القسم</label>
+                    <select id="faculty-dept"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الفرع</label>
+                    <select id="faculty-branch"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الحالة</label>
+                    <select id="faculty-active">
+                        <option value="">الكل</option>
+                        <option value="نعم">نشط</option>
+                        <option value="لا">غير نشط</option>
+                    </select>
+                </div>
+                <div class="form-group search-group">
+                    <label>بحث بالاسم أو الرقم</label>
+                    <input type="text" id="faculty-search" placeholder="ابحث...">
+                </div>
+            </div>
+            <div class="filter-stats">
+                <span id="faculty-count">0 سجل</span>
+                <button class="btn-sm" onclick="exportFacultyExcel()">تصدير Excel</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="table-wrap">
+                <table class="data-table records-table" id="tbl-faculty">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>السنة</th>
+                            <th>الرقم الوظيفي</th>
+                            <th>الاسم</th>
+                            <th>الرتبة</th>
+                            <th>القسم</th>
+                            <th>الفرع</th>
+                            <th>الجنس</th>
+                            <th>الجنسية</th>
+                            <th>البريد الإلكتروني</th>
+                            <th>الحالة</th>
+                        </tr>
+                    </thead>
+                    <tbody id="faculty-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============ سجل المستجدين ============ -->
+    <section id="entrants-view" class="view">
+        <div class="view-top">
+            <h2>🆕 سجل المستجدين</h2>
+            <p class="view-desc">مستجدو بكالوريوس الدراسات الإسلامية في الفروع وفق السجلات المؤكدة والاستدلالات المقبولة.</p>
+        </div>
+
+        <div class="card filter-bar">
+            <div class="filter-row">
+                <div class="form-group">
+                    <label>السنة</label>
+                    <select id="entrant-year"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الفرع</label>
+                    <select id="entrant-branch"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group search-group">
+                    <label>بحث بالاسم أو الرقم</label>
+                    <input type="text" id="entrant-search" placeholder="ابحث...">
+                </div>
+            </div>
+            <div class="filter-stats">
+                <span id="entrant-count">0 سجل</span>
+                <button class="btn-sm" onclick="exportEntrantsExcel()">تصدير Excel</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="table-wrap">
+                <table class="data-table records-table" id="tbl-entrants">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>السنة</th>
+                            <th>الفصل</th>
+                            <th>الرقم الجامعي</th>
+                            <th>الاسم</th>
+                            <th>التخصص</th>
+                            <th>الدرجة</th>
+                            <th>الفرع</th>
+                            <th>الجنس</th>
+                        </tr>
+                    </thead>
+                    <tbody id="entrant-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
     <!-- ============ سجل الخريجين ============ -->
     <section id="graduates-view" class="view">
         <div class="view-top">
             <h2>🎓 سجل الخريجين</h2>
-            <p class="view-desc">بيانات الخريجين التفصيلية لمتابعة التواصل والتغذية الراجعة</p>
+            <p class="view-desc">بيانات الخريجين التفصيلية لمتابعة التواصل والتغذية الراجعة. فلترة الفرع تعرض الحالات الرسمية التي أمكن إسناد فرعها بدليل كافٍ فقط.</p>
         </div>
 
         <div class="card filter-bar">
@@ -326,6 +442,10 @@
                 <div class="form-group">
                     <label>الدرجة</label>
                     <select id="grad-deg"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الفرع</label>
+                    <select id="grad-branch"><option value="">الكل</option></select>
                 </div>
                 <div class="form-group search-group">
                     <label>بحث بالاسم أو الرقم</label>
@@ -349,6 +469,7 @@
                             <th>الاسم</th>
                             <th>التخصص</th>
                             <th>الدرجة</th>
+                            <th>الفرع</th>
                             <th>الجنس</th>
                             <th>الجنسية</th>
                             <th>تاريخ القبول</th>
@@ -366,7 +487,7 @@
     <section id="noncomplete-view" class="view">
         <div class="view-top">
             <h2>📋 الطلاب غير المكملين</h2>
-            <p class="view-desc">حصر جميع الحالات الأخرى من غير المنتظمين والمتخرجين لدراسة أحوالهم</p>
+            <p class="view-desc">حصر جميع الحالات الأخرى من غير المنتظمين والمتخرجين لدراسة أحوالهم. فلترة الفرع تعرض الارتباطات الجزئية الموثوقة فقط.</p>
         </div>
 
         <div class="card filter-bar">
@@ -386,6 +507,10 @@
                 <div class="form-group">
                     <label>الحالة</label>
                     <select id="nc-status"><option value="">الكل</option></select>
+                </div>
+                <div class="form-group">
+                    <label>الفرع</label>
+                    <select id="nc-branch"><option value="">الكل</option></select>
                 </div>
                 <div class="form-group search-group">
                     <label>بحث بالاسم أو الرقم</label>
@@ -411,6 +536,7 @@
                             <th>الاسم</th>
                             <th>التخصص</th>
                             <th>الدرجة</th>
+                            <th>الفرع</th>
                             <th>الحالة</th>
                             <th>الجنس</th>
                             <th>الجنسية</th>
@@ -452,6 +578,10 @@
                     <select id="student-cat-prog"></select>
                 </div>
                 <div class="form-group">
+                    <label>الفرع</label>
+                    <select id="student-cat-branch"></select>
+                </div>
+                <div class="form-group">
                     <label>الحالة</label>
                     <select id="student-cat-status"></select>
                 </div>
@@ -483,6 +613,7 @@
 
             <p class="student-category-note">
                 النسبة تحسب من إجمالي السجلات بعد تطبيق الفلاتر. ويمكنك اختيار حالة محددة مثل المنتظمين فقط إذا أردت قراءة أدق لمحكات الدعم والرعاية.
+                فلترة الفرع في بكالوريوس الدراسات الإسلامية تشمل فقط السجلات التي أمكن إسناد فرعها بدليل كافٍ.
             </p>
 
             <div class="analytics-actions">
@@ -541,6 +672,7 @@
                                     <th>البرنامج</th>
                                     <th>الدرجة</th>
                                     <th>القسم</th>
+                                    <th>الفرع</th>
                                     <th>الحالة</th>
                                     <th>الجنس</th>
                                     <th>المعدل</th>

@@ -1069,6 +1069,10 @@ body.app-blocked { overflow: hidden; }
     max-width: 250px;
     white-space: normal;
 }
+#tbl-entrants td:nth-child(5) {
+    max-width: 250px;
+    white-space: normal;
+}
 .status-summary {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

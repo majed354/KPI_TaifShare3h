@@ -133,6 +133,9 @@ let charts = {};       // Chart instances
 let currentProg = null;// for export
 let compareThirdEnabled = false;
 let gradData = [];     // graduate records
+let facultyRosterData = []; // faculty roster for 1446 and 1447
+let entrantData = [];  // accepted new-entrant records for Islamic Studies branches
+let islamicBranchData = null;
 let ncData = [];       // non-completer records
 let studentDetailData = [];
 let appBootstrapped = false;
@@ -177,6 +180,19 @@ function shortYear(y) {
 function fmtNum(n) {
     return n != null ? n.toLocaleString('ar-SA') : '—';
 }
+function numberOrNull(value) {
+    if (value == null || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+function escapeHTML(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 function fmtNumFlex(n, frac = 2) {
     if (n == null) return '—';
     const rounded = Math.round(n);
@@ -218,6 +234,67 @@ function normalizeDegree(degree) {
     if (d === 'الماجستير' || d === 'ماجستير') return 'الماجستير';
     if (d === 'الدكتوراه' || d === 'دكتوراه') return 'دكتوراه';
     return d;
+}
+
+function isIslamicStudiesBachelor(programLike) {
+    const major = normalizeSurveyProgramName(programLike?.name || programLike?.Major_aName || '');
+    const degree = normalizeDegree(programLike?.degree || programLike?.Degree_aName || '');
+    return major === 'الدراسات الإسلامية' && degree === 'بكالوريوس';
+}
+
+function getEffectiveStudentBranch(program, degree, explicitBranch = '') {
+    const normalizedExplicitBranch = normalizeBranchName(explicitBranch);
+    const programLike = { Major_aName: program, Degree_aName: degree };
+    if (isIslamicStudiesBachelor(programLike)) return normalizedExplicitBranch;
+
+    const normalizedProgram = normalizeSurveyProgramName(program || '');
+    const normalizedDegree = normalizeDegree(degree || '');
+    if (normalizedProgram && normalizedDegree) return 'الحوية';
+    return normalizedExplicitBranch;
+}
+
+function getIslamicBranchNames() {
+    const configured = Array.isArray(islamicBranchData?.branch_order)
+        ? islamicBranchData.branch_order.map(normalizeBranchName).filter(Boolean)
+        : [];
+    return configured.length ? configured : ['الحوية', 'تربة', 'رنية', 'الخرمة'];
+}
+
+function getOrderedBranchNames(extraValues = []) {
+    const configured = getIslamicBranchNames();
+    const configuredSet = new Set(configured);
+    const extras = [...new Set((extraValues || []).map(normalizeBranchName).filter(Boolean))]
+        .filter(branch => !configuredSet.has(branch))
+        .sort((a, b) => a.localeCompare(b, 'ar'));
+    return [...configured, ...extras];
+}
+
+function getBranchesForProgram(programLike) {
+    if (isIslamicStudiesBachelor(programLike)) return getIslamicBranchNames();
+    return ['الحوية'];
+}
+
+function getIslamicBranchMetric(programLike, year, branch) {
+    if (!isIslamicStudiesBachelor(programLike)) return null;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) return null;
+    return islamicBranchData?.metrics?.[String(year)]?.[normalizedBranch] || null;
+}
+
+function getIslamicBranchCoverage(branch, year = null) {
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch) return null;
+    if (year != null) {
+        const yearKey = String(shortYear(year));
+        return islamicBranchData?.coverage?.[yearKey]?.[normalizedBranch] || null;
+    }
+    const yearKeys = Object.keys(islamicBranchData?.coverage || {})
+        .sort((a, b) => Number(b) - Number(a));
+    for (const yearKey of yearKeys) {
+        const coverage = islamicBranchData?.coverage?.[yearKey]?.[normalizedBranch];
+        if (coverage) return coverage;
+    }
+    return null;
 }
 
 function isDeptSurveyFallbackAllowed(dept) {
@@ -398,7 +475,9 @@ async function startApp() {
         initCompare();
 
         updateLoadingMessage('جاري تحميل السجلات التفصيلية...');
-        await Promise.all([loadGraduates(), loadNonCompleters(), loadStudentDetails()]);
+        await Promise.all([loadGraduates(), loadNonCompleters(), loadStudentDetails(), loadFacultyRoster()]);
+        initFacultyView();
+        initEntrantsView();
         initGraduatesView();
         initNonCompleteView();
         initStudentCategoriesView();
@@ -2219,11 +2298,40 @@ async function applyTeachingBasedFacultyFTE(rows) {
 // ========================================
 // تحميل وتحليل البيانات
 // ========================================
+async function loadIslamicBranchData() {
+    const payload = await fetchJSONIfExists(`data/islamic_branch_students.json?t=${Date.now()}`);
+    if (!payload || typeof payload !== 'object') {
+        islamicBranchData = null;
+        entrantData = [];
+        return { applied: false, reason: 'missing-islamic-branch-data' };
+    }
+    if (!payload.metrics || !Array.isArray(payload.entrants) || !Array.isArray(payload.graduates)) {
+        islamicBranchData = null;
+        entrantData = [];
+        return { applied: false, reason: 'invalid-islamic-branch-data' };
+    }
+    islamicBranchData = payload;
+    entrantData = payload.entrants
+        .filter(row => ['official', 'very_high', 'high'].includes(String(row.confidence || '')))
+        .map(row => ({ ...row }));
+    availableFacultyBranches = [...new Set([
+        ...availableFacultyBranches,
+        ...getIslamicBranchNames()
+    ])].sort((a, b) => a.localeCompare(b, 'ar'));
+    return {
+        applied: true,
+        entrants: entrantData.length,
+        graduates: payload.graduates.length,
+        branches: getIslamicBranchNames().length
+    };
+}
+
 async function loadData() {
     try {
         const res = await fetch('data/data.csv?t=' + Date.now());
         const csv = await res.text();
         allRows = parseCSV(csv);
+        const branchInfo = await loadIslamicBranchData();
         const durationInfo = await applyAverageGraduationDurationFromDetails(allRows);
         const surveyInfo = await applyGraduateSurveyIndicators(allRows);
         const experienceInfo = await applyProgramExperienceFromShari3ahSurveys(allRows);
@@ -2238,6 +2346,7 @@ async function loadData() {
             experienceInfo,
             researchInfo,
             fteInfo,
+            branchInfo,
         });
         return true;
     } catch (e) {
@@ -2430,6 +2539,35 @@ function getResearchSupportForProgramYear(prog, year, branch = ALL_BRANCH_FILTER
     return support.byBranch?.[normalizedBranch] || null;
 }
 
+function applyIslamicBranchStudentMetrics(displayData, programLike, year, branch) {
+    if (!displayData || !isIslamicStudiesBachelor(programLike)) return displayData;
+    const normalizedBranch = normalizeBranchName(branch);
+    if (!normalizedBranch || normalizedBranch === ALL_BRANCH_FILTER_VALUE) return displayData;
+
+    const metric = getIslamicBranchMetric(programLike, year, normalizedBranch);
+    const coverage = getIslamicBranchCoverage(normalizedBranch, year);
+    const regularFields = ['students_total', 'students_male', 'students_female'];
+    regularFields.forEach(field => {
+        displayData[field] = coverage?.allow_regular && metric && Object.prototype.hasOwnProperty.call(metric, field)
+            ? metric[field]
+            : null;
+    });
+    displayData.students_new = coverage?.allow_entrant && metric && Object.prototype.hasOwnProperty.call(metric, 'students_new')
+        ? metric.students_new
+        : null;
+    ['graduates_total', 'graduates_branch_matched', 'graduates_ontime', 'students_retained', 'prev_new_count', 'new_4_ago_count']
+        .forEach(field => {
+            displayData[field] = metric && Object.prototype.hasOwnProperty.call(metric, field)
+                ? metric[field]
+                : null;
+        });
+    displayData.students_saudi = null;
+    displayData.students_international = null;
+    displayData.branch_student_source = metric ? 'islamic_branch_results' : 'branch_data_unavailable';
+    displayData.branch_coverage_status = metric?.coverage_status || coverage?.status || 'unavailable';
+    return displayData;
+}
+
 function buildProgramDisplayData(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
     const baseData = prog?.years?.[year] || null;
     if (!baseData) return null;
@@ -2438,7 +2576,12 @@ function buildProgramDisplayData(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
         return { ...baseData };
     }
 
-    const displayData = { ...baseData };
+    const displayData = applyIslamicBranchStudentMetrics(
+        { ...baseData },
+        prog,
+        year,
+        normalizedBranch
+    );
     const teachingSupport = getTeachingSupportForProgramYear(prog, year, normalizedBranch);
     if (teachingSupport) {
         displayData.sections_total = Number(teachingSupport.totalSections) || 0;
@@ -2480,12 +2623,19 @@ function buildProgramDisplayDataFromRow(row, branch = ALL_BRANCH_FILTER_VALUE) {
         return { ...row };
     }
 
-    const displayData = { ...row };
     const year = parseInt(row.Semester, 10) || null;
     const dept = normalizeDepartment(row.Dept_aName);
     const major = normalizeSurveyProgramName(row.Major_aName);
     const degree = normalizeDegree(row.Degree_aName);
-    const teachingSupport = getTeachingSupportForProgramYear({ dept, name: major, degree }, year, normalizedBranch);
+    const programLike = { dept, name: major, degree };
+    const displayData = applyIslamicBranchStudentMetrics(
+        { ...row },
+        programLike,
+        year,
+        normalizedBranch
+    );
+    displayData._selectedBranch = normalizedBranch;
+    const teachingSupport = getTeachingSupportForProgramYear(programLike, year, normalizedBranch);
     if (teachingSupport) {
         displayData.sections_total = Number(teachingSupport.totalSections) || 0;
         displayData.sections_male = Number(teachingSupport.maleSections) || 0;
@@ -2502,7 +2652,7 @@ function buildProgramDisplayDataFromRow(row, branch = ALL_BRANCH_FILTER_VALUE) {
     displayData.faculty_ratio_source = facultyBase > 0 ? 'teaching_fte_branch' : 'branch_none';
 
     const researchSupport = getResearchSupportForProgramYear(
-        { dept, name: major, degree },
+        programLike,
         year,
         normalizedBranch
     );
@@ -2593,7 +2743,10 @@ function buildStudySystemBreakdown(detailRows, dataRow) {
 function buildProgramYearSnapshot(prog, year, branch = ALL_BRANCH_FILTER_VALUE, dataOverride = null) {
     const dataRow = dataOverride || buildProgramDisplayData(prog, year, branch);
     const teachingSupport = getTeachingSupportForProgramYear(prog, year, branch);
-    const detailRows = getStudentDetailRowsForProgramYear(prog, year);
+    const normalizedBranch = normalizeBranchName(branch);
+    const detailRows = normalizedBranch && normalizedBranch !== ALL_BRANCH_FILTER_VALUE
+        ? []
+        : getStudentDetailRowsForProgramYear(prog, year);
 
     const internationalMale = detailRows.length
         ? detailRows.filter(row =>
@@ -2618,18 +2771,18 @@ function buildProgramYearSnapshot(prog, year, branch = ALL_BRANCH_FILTER_VALUE, 
         teachingSupport,
         detailRows,
         studySystem: buildStudySystemBreakdown(detailRows, dataRow),
-        studentsNewTotal: dataRow ? (Number(dataRow.students_new) || 0) : null,
-        studentsTotal: dataRow ? (Number(dataRow.students_total) || 0) : null,
-        studentsMale: dataRow ? (Number(dataRow.students_male) || 0) : null,
-        studentsFemale: dataRow ? (Number(dataRow.students_female) || 0) : null,
-        internationalTotal: dataRow ? (Number(dataRow.students_international) || 0) : null,
+        studentsNewTotal: dataRow ? numberOrNull(dataRow.students_new) : null,
+        studentsTotal: dataRow ? numberOrNull(dataRow.students_total) : null,
+        studentsMale: dataRow ? numberOrNull(dataRow.students_male) : null,
+        studentsFemale: dataRow ? numberOrNull(dataRow.students_female) : null,
+        internationalTotal: dataRow ? numberOrNull(dataRow.students_international) : null,
         internationalMale,
         internationalFemale,
         avgStudentsPerSection: teachingSupport?.avgStudentsPerSection ?? null,
         avgMaleStudentsPerSection: teachingSupport?.avgMaleStudentsPerSection ?? null,
         avgFemaleStudentsPerSection: teachingSupport?.avgFemaleStudentsPerSection ?? null,
         studentFacultyRatioValue: ratioValue,
-        graduatesTotal: dataRow ? (Number(dataRow.graduates_total) || 0) : null,
+        graduatesTotal: dataRow ? numberOrNull(dataRow.graduates_total) : null,
         employmentEmployedCount: dataRow && Number.isFinite(Number(dataRow.employment_employed_count))
             ? Number(dataRow.employment_employed_count) : null,
         employmentRate: dataRow?.employment_rate ?? null,
@@ -2746,7 +2899,13 @@ function buildSelfStudyReport(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
         'متوسط عبء التدريس للذكور والإناث في جدول هيئة التدريس يعتمد على متوسط العبء الفعلي لأعضاء هيئة التدريس المصنفين بهذا الجنس داخل البرنامج.'
     ];
     if (normalizedBranch && normalizedBranch !== ALL_BRANCH_FILTER_VALUE) {
-        notes.unshift(`الفرع المختار: ${normalizedBranch}. تتغير بيانات هيئة التدريس والنشر العلمي ونسبة الطلاب إلى أعضاء هيئة التدريس بحسب هذا الفرع، بينما تبقى بيانات الطلاب والخريجين على مستوى البرنامج لعدم توفر حقل الفرع في ملفاتها الحالية.`);
+        if (isIslamicStudiesBachelor(prog)) {
+            const coverage = getIslamicBranchCoverage(normalizedBranch, year);
+            const reasons = Array.isArray(coverage?.reasons) ? coverage.reasons.join(' ') : '';
+            notes.unshift(`الفرع المختار: ${normalizedBranch}. أعداد الطلاب المعروضة رصدٌ محافظ للسجلات التي أمكن إسنادها للبرنامج والفرع بدليل كافٍ، وليست إجماليات رسمية مكتملة. يبقى مستوى الثقة محفوظًا داخليًا لأغراض التدقيق.${reasons ? ` ${reasons}` : ''}`);
+        } else {
+            notes.unshift(`المقر المعتمد لهذا البرنامج: الحوية. تتغير بيانات هيئة التدريس والنشر العلمي ونسبة الطلاب إلى أعضاء هيئة التدريس بحسب المقر.`);
+        }
     }
     if (facultyDataAvailable && facultyOverall.unknownNationalityCount > 0) {
         notes.push(`يوجد ${fmtNum(facultyOverall.unknownNationalityCount)} عضو/أعضاء هيئة تدريس بلا جنسية مصنفة في الملف الحالي، ويظهرون ضمن الإجمالي فقط.`);
@@ -3318,6 +3477,7 @@ function renderProgramsTable(items, year) {
             const yr = tr.dataset.year;
             switchView('program');
             document.getElementById('prog-select').value = pidx;
+            populateProgramBranchFilter(programs[parseInt(pidx, 10)] || null);
             fillProgYears(parseInt(pidx));
             document.getElementById('prog-year').value = yr;
             document.getElementById('prog-show').disabled = false;
@@ -3329,13 +3489,23 @@ function renderProgramsTable(items, year) {
 // ========================================
 // تفاصيل البرنامج
 // ========================================
-function populateProgramBranchFilter() {
+function populateProgramBranchFilter(prog = null) {
     const branchSelect = document.getElementById('prog-branch');
     if (!branchSelect) return;
-    const currentValue = branchSelect.value || ALL_BRANCH_FILTER_VALUE;
-    branchSelect.innerHTML = buildBranchOptionsHtml();
-    branchSelect.value = availableFacultyBranches.includes(currentValue) ? currentValue : ALL_BRANCH_FILTER_VALUE;
-    branchSelect.disabled = false;
+    const branches = prog ? getBranchesForProgram(prog) : [];
+    branchSelect.innerHTML = buildBranchOptionsHtml(branches);
+    if (!prog) {
+        branchSelect.value = ALL_BRANCH_FILTER_VALUE;
+        branchSelect.disabled = true;
+        return;
+    }
+    if (isIslamicStudiesBachelor(prog)) {
+        branchSelect.value = ALL_BRANCH_FILTER_VALUE;
+        branchSelect.disabled = false;
+    } else {
+        branchSelect.value = 'الحوية';
+        branchSelect.disabled = true;
+    }
 }
 
 function getProgramBranchSelection() {
@@ -3354,8 +3524,11 @@ function initProgramView() {
         const v = sel.value;
         document.getElementById('prog-results').classList.add('hidden');
         if (v !== '') {
+            const selectedProgram = programs[parseInt(v, 10)];
+            populateProgramBranchFilter(selectedProgram);
             fillProgYears(parseInt(v));
         } else {
+            populateProgramBranchFilter();
             document.getElementById('prog-year').disabled = true;
             document.getElementById('prog-show').disabled = true;
         }
@@ -3415,22 +3588,32 @@ function showProgramDetail() {
     if (scopeNote) {
         if (branch === ALL_BRANCH_FILTER_VALUE) {
             scopeNote.textContent = 'يعرض التقرير الحالي أرقام البرنامج على مستوى جميع الفروع.';
+        } else if (isIslamicStudiesBachelor(prog)) {
+            const coverage = getIslamicBranchCoverage(branch, year);
+            const coverageNote = Array.isArray(coverage?.reasons) && coverage.reasons.length
+                ? ` ${coverage.reasons.join(' ')}`
+                : '';
+            scopeNote.textContent = `الفرع المختار: ${branch}. الأعداد المعروضة رصد محافظ للسجلات المقبولة التي أمكن إسنادها للبرنامج والفرع، وليست إجماليات رسمية مكتملة.${coverageNote}`;
         } else {
-            scopeNote.textContent = `الفرع المختار: ${branch}. تتغير بيانات هيئة التدريس والنشر العلمي ونسبة الطلاب إلى أعضاء هيئة التدريس بحسب الفرع، بينما تبقى بقية بيانات الطلاب والخريجين على مستوى البرنامج لعدم توفر حقل الفرع في مصادرها الحالية.`;
+            scopeNote.textContent = 'المقر المعتمد لهذا البرنامج: الحوية.';
         }
         scopeNote.classList.remove('hidden');
     }
 
     // Stats
     const stats = [];
-    if (d.students_total > 0) stats.push({icon:'👥', label:'إجمالي الطلاب', value: fmtNum(d.students_total), color:'var(--primary)'});
+    const hasBranchStudentMetrics = d.branch_student_source === 'islamic_branch_results';
+    const regularLabel = hasBranchStudentMetrics ? 'المنتظمون المرصودون' : 'إجمالي المنتظمين';
+    const entrantsLabel = hasBranchStudentMetrics ? 'المستجدون المرصودون' : 'المستجدون';
+    if (d.students_total > 0 || (hasBranchStudentMetrics && d.students_total === 0)) stats.push({icon:'👥', label:regularLabel, value: fmtNum(d.students_total), color:'var(--primary)'});
     if (d.students_male > 0) stats.push({icon:'👨', label:'الذكور', value: fmtNum(d.students_male), color:'#3b82f6'});
     if (d.students_female > 0) stats.push({icon:'👩', label:'الإناث', value: fmtNum(d.students_female), color:'#ec4899'});
     if (d.students_saudi > 0) stats.push({icon:'🇸🇦', label:'السعوديون', value: fmtNum(d.students_saudi), color:'#059669'});
     if (d.students_international > 0) stats.push({icon:'🌍', label:'الدوليون', value: fmtNum(d.students_international), color:'#f97316'});
-    if (d.students_new > 0) stats.push({icon:'🆕', label:'المستجدون', value: fmtNum(d.students_new), color:'#06b6d4'});
+    if (d.students_new > 0 || (hasBranchStudentMetrics && d.students_new === 0)) stats.push({icon:'🆕', label:entrantsLabel, value: fmtNum(d.students_new), color:'#06b6d4'});
     if (d.students_retained > 0 || d.prev_new_count > 0) stats.push({icon:'🔄', label:'استبقاء الدفعة السابقة', value: d.prev_new_count > 0 ? fmtNum(d.students_retained) + ' من ' + fmtNum(d.prev_new_count) : fmtNum(d.students_retained), color:'#8b5cf6'});
-    if (d.graduates_total > 0) stats.push({icon:'🎓', label:'إجمالي الخريجين', value: fmtNum(d.graduates_total), color:'#10b981'});
+    if (d.graduates_total > 0 || (hasBranchStudentMetrics && d.graduates_total === 0)) stats.push({icon:'🎓', label:'إجمالي الخريجين', value: fmtNum(d.graduates_total), color:'#10b981'});
+    if (hasBranchStudentMetrics && d.graduates_branch_matched > 0) stats.push({icon:'🎓', label:'خريجون أمكن إسنادهم للفرع', value: fmtNum(d.graduates_branch_matched), color:'#10b981'});
     if (d.graduates_ontime > 0 || d.new_4_ago_count > 0) stats.push({icon:'⏱️', label:'خريجو الدفعة بالوقت', value: d.new_4_ago_count > 0 ? fmtNum(d.graduates_ontime) + ' من ' + fmtNum(d.new_4_ago_count) : fmtNum(d.graduates_ontime), color:'#0d8e8e'});
     const branchTeachingSupport = getTeachingSupportForProgramYear(prog, year, branch);
     const sectionsCount = branch !== ALL_BRANCH_FILTER_VALUE && Number.isFinite(branchTeachingSupport?.totalSections)
@@ -3491,19 +3674,23 @@ function showProgramDetail() {
     if (selfStudyWrap) selfStudyWrap.innerHTML = renderSelfStudyReport(selfStudyReport);
 
     // Trend chart
-    renderTrendChart(prog);
+    renderTrendChart(prog, branch);
 
     document.getElementById('prog-results').classList.remove('hidden');
     document.getElementById('prog-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function renderTrendChart(prog) {
+function renderTrendChart(prog, branch = ALL_BRANCH_FILTER_VALUE) {
     destroyChart('trend');
     const years = Object.keys(prog.years).map(Number).filter(y => DISPLAY_YEARS.includes(y)).sort();
     const labels = years.map(y => fmtYear(y));
-    const students = years.map(y => prog.years[y].students_total);
-    const grads = years.map(y => prog.years[y].graduates_total);
-    const newS = years.map(y => prog.years[y].students_new);
+    const scopedRows = years.map(y => buildProgramDisplayData(prog, y, branch));
+    const branchScoped = branch !== ALL_BRANCH_FILTER_VALUE && isIslamicStudiesBachelor(prog);
+    const students = scopedRows.map(row => row?.students_total ?? null);
+    const grads = scopedRows.map(row => branchScoped
+        ? (row?.graduates_branch_matched ?? null)
+        : (row?.graduates_total ?? null));
+    const newS = scopedRows.map(row => row?.students_new ?? null);
 
     const ctx = document.getElementById('chart-trend').getContext('2d');
     charts.trend = new Chart(ctx, {
@@ -3511,9 +3698,9 @@ function renderTrendChart(prog) {
         data: {
             labels,
             datasets: [
-                { label: 'الطلاب المنتظمون', data: students, borderColor: '#0d8e8e', backgroundColor: 'rgba(13,142,142,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
-                { label: 'الخريجين', data: grads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
-                { label: 'المستجدون', data: newS, borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
+                { label: branchScoped ? 'المنتظمون المرصودون' : 'الطلاب المنتظمون', data: students, borderColor: '#0d8e8e', backgroundColor: 'rgba(13,142,142,0.1)', fill: true, tension: 0.3, pointRadius: 5 },
+                { label: branchScoped ? 'خريجون أمكن إسنادهم للفرع' : 'الخريجين', data: grads, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
+                { label: branchScoped ? 'المستجدون المرصودون' : 'المستجدون', data: newS, borderColor: '#3b82f6', backgroundColor: 'transparent', tension: 0.3, pointRadius: 5 },
             ]
         },
         options: {
@@ -3531,14 +3718,28 @@ function renderTrendChart(prog) {
 // ========================================
 // المقارنة
 // ========================================
+function populateCompareBranchFilter(slot) {
+    const select = document.getElementById(`cmp-${slot}-branch`);
+    const programSelect = document.getElementById(`cmp-${slot}-prog`);
+    if (!select) return;
+    const program = programSelect?.value !== '' ? programs[parseInt(programSelect.value, 10)] : null;
+    const branches = program ? getBranchesForProgram(program) : [];
+    select.innerHTML = buildBranchOptionsHtml(branches);
+    if (!program) {
+        select.value = ALL_BRANCH_FILTER_VALUE;
+        select.disabled = true;
+    } else if (isIslamicStudiesBachelor(program)) {
+        select.value = ALL_BRANCH_FILTER_VALUE;
+        select.disabled = false;
+    } else {
+        select.value = 'الحوية';
+        select.disabled = true;
+    }
+}
+
 function populateCompareBranchFilters() {
     ['a', 'b', 'c'].forEach(slot => {
-        const select = document.getElementById(`cmp-${slot}-branch`);
-        if (!select) return;
-        const currentValue = select.value || ALL_BRANCH_FILTER_VALUE;
-        select.innerHTML = buildBranchOptionsHtml();
-        select.value = availableFacultyBranches.includes(currentValue) ? currentValue : ALL_BRANCH_FILTER_VALUE;
-        select.disabled = false;
+        populateCompareBranchFilter(slot);
     });
 }
 
@@ -3552,6 +3753,7 @@ function initCompare() {
 
     ['a','b','c'].forEach(slot => {
         document.getElementById(`cmp-${slot}-prog`).addEventListener('change', () => {
+            populateCompareBranchFilter(slot);
             populateCompareYears(slot);
             document.getElementById('cmp-results').classList.add('hidden');
             updateCmpBtn();
@@ -3701,10 +3903,10 @@ function formatDiffCell(diff) {
     return '<span class="diff-same">0</span>';
 }
 
-function buildBranchOptionsHtml() {
+function buildBranchOptionsHtml(branches = availableFacultyBranches) {
     return [
         `<option value="${ALL_BRANCH_FILTER_VALUE}">${ALL_BRANCH_FILTER_LABEL}</option>`,
-        ...availableFacultyBranches.map(branch => `<option value="${branch}">${branch}</option>`)
+        ...branches.map(branch => `<option value="${escapeHTML(branch)}">${escapeHTML(branch)}</option>`)
     ].join('');
 }
 
@@ -3979,6 +4181,201 @@ function exportCompareCSV() {
 }
 
 // ========================================
+// قائمة أعضاء هيئة التدريس لعامي 1446 و1447
+// ========================================
+async function loadFacultyRoster() {
+    try {
+        const csvText = await fetchTextIfExists(`data/faculty.csv?t=${Date.now()}`);
+        if (!csvText) {
+            facultyRosterData = [];
+            return false;
+        }
+        facultyRosterData = parseFlatCSV(csvText, ',')
+            .map(row => ({
+                year: parseInt(pickCell(row, ['year', 'Year']), 10) || null,
+                id: String(pickCell(row, ['id', 'ID']) || '').trim(),
+                name: String(pickCell(row, ['name', 'Name']) || '').trim(),
+                rank: normalizeRank(pickCell(row, ['rank', 'Rank'])),
+                email: String(pickCell(row, ['email', 'Email']) || '').trim(),
+                active: String(pickCell(row, ['active', 'Active']) || '').trim(),
+                department: normalizeDepartment(pickCell(row, ['department', 'Department'])),
+                nationality: String(pickCell(row, ['nationality', 'Nationality', 'الجنسية']) || '').trim(),
+                gender: String(pickCell(row, ['gender', 'Gender', 'الجنس']) || '').trim(),
+                branch: normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))
+            }))
+            .filter(row => [1446, 1447].includes(row.year) && row.id && row.name);
+        return true;
+    } catch (error) {
+        console.error('خطأ في تحميل قائمة أعضاء هيئة التدريس:', error);
+        facultyRosterData = [];
+        return false;
+    }
+}
+
+function initFacultyView() {
+    const yearSelect = document.getElementById('faculty-year');
+    const deptSelect = document.getElementById('faculty-dept');
+    const branchSelect = document.getElementById('faculty-branch');
+    const activeSelect = document.getElementById('faculty-active');
+    const searchInput = document.getElementById('faculty-search');
+    if (!yearSelect || !deptSelect || !branchSelect || !activeSelect || !searchInput) return;
+
+    const years = [...new Set(facultyRosterData.map(row => row.year).filter(Boolean))].sort((a, b) => a - b);
+    const departments = [...new Set(facultyRosterData.map(row => row.department).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar'));
+    const branches = getOrderedBranchNames(facultyRosterData.map(row => row.branch));
+    yearSelect.innerHTML = '<option value="">الكل</option>' +
+        years.map(year => `<option value="${year}">${fmtYear(year)}</option>`).join('');
+    deptSelect.innerHTML = '<option value="">الكل</option>' +
+        departments.map(department => `<option value="${escapeHTML(department)}">${escapeHTML(department)}</option>`).join('');
+    branchSelect.innerHTML = '<option value="">الكل</option>' +
+        branches.map(branch => `<option value="${escapeHTML(branch)}">${escapeHTML(branch)}</option>`).join('');
+
+    [yearSelect, deptSelect, branchSelect, activeSelect].forEach(element =>
+        element.addEventListener('change', renderFacultyRoster)
+    );
+    searchInput.addEventListener('input', renderFacultyRoster);
+    renderFacultyRoster();
+}
+
+function getFilteredFacultyRoster() {
+    const year = parseInt(document.getElementById('faculty-year')?.value, 10) || null;
+    const department = document.getElementById('faculty-dept')?.value || '';
+    const branch = document.getElementById('faculty-branch')?.value || '';
+    const active = document.getElementById('faculty-active')?.value || '';
+    const search = (document.getElementById('faculty-search')?.value || '').trim().toLowerCase();
+    return facultyRosterData.filter(row => {
+        if (year && row.year !== year) return false;
+        if (department && row.department !== department) return false;
+        if (branch && row.branch !== branch) return false;
+        if (active && row.active !== active) return false;
+        if (!search) return true;
+        return row.name.toLowerCase().includes(search) || row.id.includes(search) || row.email.toLowerCase().includes(search);
+    });
+}
+
+function renderFacultyRoster() {
+    const filtered = getFilteredFacultyRoster();
+    const count = document.getElementById('faculty-count');
+    if (count) count.textContent = `${filtered.length.toLocaleString('ar-SA')} سجل من أصل ${facultyRosterData.length.toLocaleString('ar-SA')}`;
+    const tbody = document.getElementById('faculty-tbody');
+    if (!tbody) return;
+    const maxShow = 500;
+    tbody.innerHTML = filtered.slice(0, maxShow).map((row, index) => `<tr class="${index % 2 ? 'alt' : ''}">
+        <td>${index + 1}</td>
+        <td>${escapeHTML(fmtYear(row.year))}</td>
+        <td>${escapeHTML(row.id)}</td>
+        <td>${escapeHTML(row.name)}</td>
+        <td>${escapeHTML(row.rank)}</td>
+        <td>${escapeHTML(row.department)}</td>
+        <td>${escapeHTML(row.branch || '—')}</td>
+        <td>${escapeHTML(row.gender)}</td>
+        <td>${escapeHTML(row.nationality)}</td>
+        <td>${escapeHTML(row.email || '—')}</td>
+        <td>${row.active === 'نعم' ? 'نشط' : 'غير نشط'}</td>
+    </tr>`).join('');
+}
+
+function exportFacultyExcel() {
+    const rows = [
+        ['السنة','الرقم الوظيفي','الاسم','الرتبة','القسم','الفرع','الجنس','الجنسية','البريد الإلكتروني','الحالة'],
+        ...getFilteredFacultyRoster().map(row => [
+            fmtYear(row.year), row.id, row.name, row.rank, row.department, row.branch,
+            row.gender, row.nationality, row.email, row.active === 'نعم' ? 'نشط' : 'غير نشط'
+        ])
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'هيئة التدريس');
+    XLSX.writeFile(workbook, 'قائمة-هيئة-التدريس-1446-1447.xlsx');
+}
+
+// ========================================
+// سجل المستجدين في فروع الدراسات الإسلامية
+// ========================================
+function formatAcademicSemester(value) {
+    const semester = parseInt(value, 10);
+    if (semester === 1) return 'الفصل الأول';
+    if (semester === 2) return 'الفصل الثاني';
+    if (semester === 3) return 'الفصل الصيفي';
+    return '—';
+}
+
+function initEntrantsView() {
+    const yearSelect = document.getElementById('entrant-year');
+    const branchSelect = document.getElementById('entrant-branch');
+    const searchInput = document.getElementById('entrant-search');
+    if (!yearSelect || !branchSelect || !searchInput) return;
+
+    const years = [...new Set(entrantData.map(row => String(row.year || '')).filter(Boolean))]
+        .sort((a, b) => Number(a) - Number(b));
+    const branches = getOrderedBranchNames(entrantData.map(row => row.branch));
+    yearSelect.innerHTML = '<option value="">الكل</option>' +
+        years.map(year => `<option value="${escapeHTML(year)}">${fmtYear(year)}</option>`).join('');
+    branchSelect.innerHTML = '<option value="">الكل</option>' +
+        branches.map(branch => `<option value="${escapeHTML(branch)}">${escapeHTML(branch)}</option>`).join('');
+
+    [yearSelect, branchSelect].forEach(element => element.addEventListener('change', renderEntrants));
+    searchInput.addEventListener('input', renderEntrants);
+    renderEntrants();
+}
+
+function getFilteredEntrants() {
+    const yearFilter = document.getElementById('entrant-year')?.value || '';
+    const branchFilter = document.getElementById('entrant-branch')?.value || '';
+    const search = (document.getElementById('entrant-search')?.value || '').trim().toLowerCase();
+    return entrantData.filter(row => {
+        if (yearFilter && String(row.year) !== yearFilter) return false;
+        if (branchFilter && normalizeBranchName(row.branch) !== branchFilter) return false;
+        if (!search) return true;
+        return String(row.name || '').toLowerCase().includes(search) ||
+            String(row.student_id || '').includes(search);
+    });
+}
+
+function renderEntrants() {
+    const filtered = getFilteredEntrants();
+    const count = document.getElementById('entrant-count');
+    if (count) {
+        count.textContent = `${filtered.length.toLocaleString('ar-SA')} سجل من أصل ${entrantData.length.toLocaleString('ar-SA')}`;
+    }
+    const tbody = document.getElementById('entrant-tbody');
+    if (!tbody) return;
+    const maxShow = 500;
+    tbody.innerHTML = filtered.slice(0, maxShow).map((row, index) => `<tr class="${index % 2 ? 'alt' : ''}">
+        <td>${index + 1}</td>
+        <td>${fmtYear(row.year)}</td>
+        <td>${formatAcademicSemester(row.semester)}</td>
+        <td>${escapeHTML(row.student_id)}</td>
+        <td>${escapeHTML(row.name)}</td>
+        <td>${escapeHTML(row.program)}</td>
+        <td>${escapeHTML(row.degree)}</td>
+        <td>${escapeHTML(row.branch)}</td>
+        <td>${escapeHTML(row.gender)}</td>
+    </tr>`).join('');
+    if (filtered.length > maxShow) {
+        tbody.innerHTML += `<tr><td colspan="9" style="text-align:center;color:var(--text-light);padding:16px">
+            يتم عرض أول ${maxShow} سجل. استخدم الفلاتر أو صدّر Excel لرؤية الكل.
+        </td></tr>`;
+    }
+}
+
+function exportEntrantsExcel() {
+    const filtered = getFilteredEntrants();
+    const rows = [
+        ['السنة','الفصل','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الفرع','الجنس'],
+        ...filtered.map(row => [
+            fmtYear(row.year), formatAcademicSemester(row.semester), row.student_id, row.name,
+            row.program, row.degree, row.department, row.branch, row.gender
+        ])
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'المستجدون');
+    XLSX.writeFile(workbook, 'سجل-المستجدين-حسب-الفرع.xlsx');
+}
+
+// ========================================
 // سجل الخريجين
 // ========================================
 const STATUS_MAP = {
@@ -4013,7 +4410,11 @@ async function loadGraduates() {
     try {
         const res = await fetch('data/graduates_detail.csv?t=' + Date.now());
         const csv = await res.text();
-        gradData = parseDetailCSV(csv);
+        gradData = parseDetailCSV(csv).map(row => ({
+            ...row,
+            'الفرع': getEffectiveStudentBranch(row['التخصص'], row['الدرجة'], row['الفرع'])
+        }));
+        mergeIslamicBranchGraduates();
         return true;
     } catch (e) {
         console.error('خطأ في تحميل بيانات الخريجين:', e);
@@ -4021,16 +4422,114 @@ async function loadGraduates() {
     }
 }
 
+function mergeIslamicBranchGraduates() {
+    const accepted = Array.isArray(islamicBranchData?.graduates)
+        ? islamicBranchData.graduates.filter(row =>
+            ['official', 'very_high', 'high'].includes(String(row.confidence || ''))
+        )
+        : [];
+    if (!accepted.length) return;
+
+    const keyFor = (year, studentId, program, degree) => [
+        parseInt(year, 10) || 0,
+        String(studentId || '').trim(),
+        normalizeSurveyProgramName(program || ''),
+        normalizeDegree(degree || '')
+    ].join('|');
+    const branchRowsByKey = new Map(accepted.map(row => [
+        keyFor(row.year, row.student_id, row.program, row.degree),
+        row
+    ]));
+
+    gradData = gradData.map(row => {
+        if (normalizeSurveyProgramName(row['التخصص']) !== 'الدراسات الإسلامية') return row;
+        if (normalizeDegree(row['الدرجة']) !== 'بكالوريوس') return row;
+        const matched = branchRowsByKey.get(keyFor(
+            row['السنة'], row['الرقم_الجامعي'], row['التخصص'], row['الدرجة']
+        ));
+        if (!matched) return row;
+        return {
+            ...row,
+            'الفرع': String(matched.branch || '').trim(),
+            _confidence: matched.confidence,
+            _branchConfidence: matched.branch_confidence || '',
+            _branchSource: matched.source || ''
+        };
+    });
+
+    const existing = new Set(gradData.map(row => keyFor(
+        row['السنة'], row['الرقم_الجامعي'], row['التخصص'], row['الدرجة']
+    )));
+    accepted.forEach(row => {
+        const key = keyFor(row.year, row.student_id, row.program, row.degree);
+        if (existing.has(key)) return;
+        gradData.push({
+            'السنة': String(row.year ?? ''),
+            'الرقم_الجامعي': String(row.student_id || ''),
+            'الاسم': String(row.name || ''),
+            'التخصص': String(row.program || 'الدراسات الإسلامية'),
+            'الدرجة': String(row.degree || 'بكالوريوس'),
+            'القسم': String(row.department || 'الدراسات الإسلامية'),
+            'الفرع': String(row.branch || ''),
+            'الجنس': String(row.gender || ''),
+            'الجنسية': String(row.nationality || ''),
+            'تاريخ_القبول': String(row.official_admission_date || row.admission_date || ''),
+            'تاريخ_التخرج': String(row.official_graduation_date || row.graduation_date || ''),
+            'تاريخ_التخرج_المتوقع': '',
+            'المعدل': String(row.official_gpa || row.gpa || ''),
+            _confidence: row.confidence,
+            _branchConfidence: row.branch_confidence || '',
+            _branchSource: row.source || ''
+        });
+        existing.add(key);
+    });
+}
+
 async function loadNonCompleters() {
     try {
         const res = await fetch('data/non_completers.csv?t=' + Date.now());
         const csv = await res.text();
-        ncData = parseDetailCSV(csv);
+        ncData = parseDetailCSV(csv).map(row => ({
+            ...row,
+            'الفرع': getEffectiveStudentBranch(row['التخصص'], row['الدرجة'], row['الفرع'])
+        }));
+        mergeIslamicBranchNonCompleters();
         return true;
     } catch (e) {
         console.error('خطأ في تحميل بيانات غير المكملين:', e);
         return false;
     }
+}
+
+function mergeIslamicBranchNonCompleters() {
+    const accepted = Array.isArray(islamicBranchData?.noncompleters)
+        ? islamicBranchData.noncompleters.filter(row =>
+            ['official', 'very_high', 'high'].includes(String(row.event_confidence || row.confidence || '')) &&
+            ['very_high', 'high'].includes(String(row.branch_confidence || ''))
+        )
+        : [];
+    if (!accepted.length) return;
+    const keyFor = (year, studentId, program, degree) => [
+        parseInt(year, 10) || 0,
+        String(studentId || '').trim(),
+        normalizeSurveyProgramName(program || ''),
+        normalizeDegree(degree || '')
+    ].join('|');
+    const mapped = new Map(accepted.map(row => [
+        keyFor(row.year, row.student_id, row.program, row.degree),
+        row
+    ]));
+    ncData = ncData.map(row => {
+        const match = mapped.get(keyFor(
+            row['آخر_سنة'], row['الرقم_الجامعي'], row['التخصص'], row['الدرجة']
+        ));
+        if (!match) return row;
+        return {
+            ...row,
+            'الفرع': normalizeBranchName(match.branch),
+            _branchConfidence: match.branch_confidence
+        };
+    });
 }
 
 async function loadStudentDetails() {
@@ -4043,6 +4542,7 @@ async function loadStudentDetails() {
             const normalizedDept = normalizeDepartment(row['القسم'] || '');
             const gpa = analyticsParseGPA(row['المعدل']);
             const categoryId = classifyStudentCategoryId(gpa);
+            const branch = getEffectiveStudentBranch(normalizedProgram, normalizedDegree, row['الفرع']);
             const searchText = normalizeArabicText([
                 row['السنة'],
                 row['الرقم_الجامعي'],
@@ -4050,6 +4550,7 @@ async function loadStudentDetails() {
                 normalizedProgram,
                 normalizedDegree,
                 normalizedDept,
+                branch,
                 row['الحالة'],
                 row['الجنس'],
                 row['الجنسية']
@@ -4059,6 +4560,7 @@ async function loadStudentDetails() {
                 'التخصص': normalizedProgram,
                 'الدرجة': normalizedDegree,
                 'القسم': normalizedDept,
+                'الفرع': branch,
                 _year: parseInt(row['السنة'], 10) || 0,
                 _gpa: gpa,
                 _categoryId: categoryId,
@@ -4066,11 +4568,44 @@ async function loadStudentDetails() {
                 _searchText: searchText
             };
         });
+        mergeStudentDetailBranches();
         return true;
     } catch (e) {
         console.error('خطأ في تحميل بيانات الطلاب التفصيلية:', e);
         return false;
     }
+}
+
+function mergeStudentDetailBranches() {
+    const accepted = Array.isArray(islamicBranchData?.student_detail_branches)
+        ? islamicBranchData.student_detail_branches.filter(row =>
+            ['very_high', 'high'].includes(String(row.branch_confidence || ''))
+        )
+        : [];
+    if (!accepted.length) return;
+    const keyFor = (year, studentId, program, degree) => [
+        parseInt(year, 10) || 0,
+        String(studentId || '').trim(),
+        normalizeSurveyProgramName(program || ''),
+        normalizeDegree(degree || '')
+    ].join('|');
+    const mapped = new Map(accepted.map(row => [
+        keyFor(row.year, row.student_id, row.program, row.degree),
+        row
+    ]));
+    studentDetailData = studentDetailData.map(row => {
+        const match = mapped.get(keyFor(
+            row['السنة'], row['الرقم_الجامعي'], row['التخصص'], row['الدرجة']
+        ));
+        if (!match) return row;
+        const branch = normalizeBranchName(match.branch);
+        return {
+            ...row,
+            'الفرع': branch,
+            _branchConfidence: match.branch_confidence,
+            _searchText: `${row._searchText} ${normalizeArabicText(branch).toLowerCase()}`
+        };
+    });
 }
 
 function initGraduatesView() {
@@ -4080,6 +4615,7 @@ function initGraduatesView() {
     const years = [...new Set(gradData.map(g => g['السنة']))].sort();
     const progs = [...new Set(gradData.map(g => g['التخصص']))].sort((a,b) => a.localeCompare(b,'ar'));
     const degs = [...new Set(gradData.map(g => g['الدرجة']))];
+    const branches = getOrderedBranchNames(gradData.map(row => row['الفرع']));
 
     const ySel = document.getElementById('grad-year');
     ySel.innerHTML = '<option value="">الكل</option>' +
@@ -4093,8 +4629,12 @@ function initGraduatesView() {
     dSel.innerHTML = '<option value="">الكل</option>' +
         degs.map(d => `<option value="${d}">${d}</option>`).join('');
 
+    const bSel = document.getElementById('grad-branch');
+    bSel.innerHTML = '<option value="">الكل</option>' +
+        branches.map(branch => `<option value="${escapeHTML(branch)}">${escapeHTML(branch)}</option>`).join('');
+
     // Event listeners
-    [ySel, pSel, dSel].forEach(el => el.addEventListener('change', renderGraduates));
+    [ySel, pSel, dSel, bSel].forEach(el => el.addEventListener('change', renderGraduates));
     document.getElementById('grad-search').addEventListener('input', renderGraduates);
 
     renderGraduates();
@@ -4104,15 +4644,17 @@ function renderGraduates() {
     const yearFilter = document.getElementById('grad-year').value;
     const progFilter = document.getElementById('grad-prog').value;
     const degFilter = document.getElementById('grad-deg').value;
+    const branchFilter = document.getElementById('grad-branch').value;
     const search = document.getElementById('grad-search').value.trim().toLowerCase();
 
     let filtered = gradData;
     if (yearFilter) filtered = filtered.filter(g => g['السنة'] === yearFilter);
     if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
     if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (branchFilter) filtered = filtered.filter(g => normalizeBranchName(g['الفرع']) === branchFilter);
     if (search) filtered = filtered.filter(g =>
-        g['الاسم'].toLowerCase().includes(search) ||
-        g['الرقم_الجامعي'].includes(search)
+        String(g['الاسم'] || '').toLowerCase().includes(search) ||
+        String(g['الرقم_الجامعي'] || '').includes(search)
     );
 
     document.getElementById('grad-count').textContent =
@@ -4124,20 +4666,21 @@ function renderGraduates() {
 
     tbody.innerHTML = showing.map((g, i) => `<tr class="${i%2?'alt':''}">
         <td>${i+1}</td>
-        <td>${fmtYear(g['السنة'])}</td>
-        <td>${g['الرقم_الجامعي']}</td>
-        <td>${g['الاسم']}</td>
-        <td>${g['التخصص']}</td>
-        <td>${g['الدرجة']}</td>
-        <td>${g['الجنس']}</td>
-        <td>${g['الجنسية']}</td>
-        <td>${g['تاريخ_القبول']}</td>
-        <td>${g['تاريخ_التخرج']}</td>
-        <td>${g['المعدل']}</td>
+        <td>${escapeHTML(fmtYear(g['السنة']))}</td>
+        <td>${escapeHTML(g['الرقم_الجامعي'])}</td>
+        <td>${escapeHTML(g['الاسم'])}</td>
+        <td>${escapeHTML(g['التخصص'])}</td>
+        <td>${escapeHTML(g['الدرجة'])}</td>
+        <td>${escapeHTML(g['الفرع'] || '—')}</td>
+        <td>${escapeHTML(g['الجنس'])}</td>
+        <td>${escapeHTML(g['الجنسية'])}</td>
+        <td>${escapeHTML(g['تاريخ_القبول'])}</td>
+        <td>${escapeHTML(g['تاريخ_التخرج'])}</td>
+        <td>${escapeHTML(g['المعدل'])}</td>
     </tr>`).join('');
 
     if (filtered.length > MAX_SHOW) {
-        tbody.innerHTML += `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:16px">
+        tbody.innerHTML += `<tr><td colspan="12" style="text-align:center;color:var(--text-light);padding:16px">
             يتم عرض أول ${MAX_SHOW} سجل. استخدم الفلاتر لتصفية النتائج أو صدّر Excel لرؤية الكل.
         </td></tr>`;
     }
@@ -4147,21 +4690,23 @@ function exportGradsExcel() {
     const yearFilter = document.getElementById('grad-year').value;
     const progFilter = document.getElementById('grad-prog').value;
     const degFilter = document.getElementById('grad-deg').value;
+    const branchFilter = document.getElementById('grad-branch').value;
     const search = document.getElementById('grad-search').value.trim().toLowerCase();
 
     let filtered = gradData;
     if (yearFilter) filtered = filtered.filter(g => g['السنة'] === yearFilter);
     if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
     if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
+    if (branchFilter) filtered = filtered.filter(g => normalizeBranchName(g['الفرع']) === branchFilter);
     if (search) filtered = filtered.filter(g =>
-        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+        String(g['الاسم'] || '').toLowerCase().includes(search) || String(g['الرقم_الجامعي'] || '').includes(search)
     );
 
     const rows = [
-        ['السنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الجنس','الجنسية','تاريخ القبول','تاريخ التخرج','المعدل'],
+        ['السنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الفرع','الجنس','الجنسية','تاريخ القبول','تاريخ التخرج','المعدل'],
         ...filtered.map(g => [
             fmtYear(g['السنة']), g['الرقم_الجامعي'], g['الاسم'], g['التخصص'], g['الدرجة'],
-            g['القسم'], g['الجنس'], g['الجنسية'], g['تاريخ_القبول'], g['تاريخ_التخرج'], g['المعدل']
+            g['القسم'], g['الفرع'] || '', g['الجنس'], g['الجنسية'], g['تاريخ_القبول'], g['تاريخ_التخرج'], g['المعدل']
         ])
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -4180,6 +4725,7 @@ function initNonCompleteView() {
     const progs = [...new Set(ncData.map(g => g['التخصص']))].sort((a,b) => a.localeCompare(b,'ar'));
     const degs = [...new Set(ncData.map(g => g['الدرجة']))];
     const statuses = [...new Set(ncData.map(g => g['الحالة']))].sort((a,b) => a.localeCompare(b,'ar'));
+    const branches = getOrderedBranchNames(ncData.map(row => row['الفرع']));
 
     document.getElementById('nc-year').innerHTML = '<option value="">الكل</option>' +
         years.map(y => `<option value="${y}">${fmtYear(y)}</option>`).join('');
@@ -4189,8 +4735,10 @@ function initNonCompleteView() {
         degs.map(d => `<option value="${d}">${d}</option>`).join('');
     document.getElementById('nc-status').innerHTML = '<option value="">الكل</option>' +
         statuses.map(s => `<option value="${s}">${s}</option>`).join('');
+    document.getElementById('nc-branch').innerHTML = '<option value="">الكل</option>' +
+        branches.map(branch => `<option value="${escapeHTML(branch)}">${escapeHTML(branch)}</option>`).join('');
 
-    ['nc-year','nc-prog','nc-deg','nc-status'].forEach(id =>
+    ['nc-year','nc-prog','nc-deg','nc-status','nc-branch'].forEach(id =>
         document.getElementById(id).addEventListener('change', renderNonCompleters));
     document.getElementById('nc-search').addEventListener('input', renderNonCompleters);
 
@@ -4202,6 +4750,7 @@ function renderNonCompleters() {
     const progFilter = document.getElementById('nc-prog').value;
     const degFilter = document.getElementById('nc-deg').value;
     const statusFilter = document.getElementById('nc-status').value;
+    const branchFilter = document.getElementById('nc-branch').value;
     const search = document.getElementById('nc-search').value.trim().toLowerCase();
 
     let filtered = ncData;
@@ -4209,8 +4758,9 @@ function renderNonCompleters() {
     if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
     if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
     if (statusFilter) filtered = filtered.filter(g => g['الحالة'] === statusFilter);
+    if (branchFilter) filtered = filtered.filter(g => normalizeBranchName(g['الفرع']) === branchFilter);
     if (search) filtered = filtered.filter(g =>
-        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+        String(g['الاسم'] || '').toLowerCase().includes(search) || String(g['الرقم_الجامعي'] || '').includes(search)
     );
 
     document.getElementById('nc-count').textContent =
@@ -4228,7 +4778,7 @@ function renderNonCompleters() {
             const info = STATUS_MAP[st] || { cls: '', label: st };
             return `<div class="status-card">
                 <span class="sc-count">${cnt.toLocaleString('ar-SA')}</span>
-                <span class="sc-label"><span class="status-badge ${info.cls}">${info.label}</span></span>
+                <span class="sc-label"><span class="status-badge ${info.cls}">${escapeHTML(info.label)}</span></span>
             </div>`;
         }).join('');
 
@@ -4241,21 +4791,22 @@ function renderNonCompleters() {
         const info = STATUS_MAP[nc['الحالة']] || { cls: '', label: nc['الحالة'] };
         return `<tr class="${i%2?'alt':''}">
             <td>${i+1}</td>
-            <td>${fmtYear(nc['آخر_سنة'])}</td>
-            <td>${nc['الرقم_الجامعي']}</td>
-            <td>${nc['الاسم']}</td>
-            <td>${nc['التخصص']}</td>
-            <td>${nc['الدرجة']}</td>
-            <td><span class="status-badge ${info.cls}">${nc['الحالة']}</span></td>
-            <td>${nc['الجنس']}</td>
-            <td>${nc['الجنسية']}</td>
-            <td>${nc['تاريخ_القبول']}</td>
-            <td>${nc['المعدل']}</td>
+            <td>${escapeHTML(fmtYear(nc['آخر_سنة']))}</td>
+            <td>${escapeHTML(nc['الرقم_الجامعي'])}</td>
+            <td>${escapeHTML(nc['الاسم'])}</td>
+            <td>${escapeHTML(nc['التخصص'])}</td>
+            <td>${escapeHTML(nc['الدرجة'])}</td>
+            <td>${escapeHTML(nc['الفرع'] || '—')}</td>
+            <td><span class="status-badge ${info.cls}">${escapeHTML(nc['الحالة'])}</span></td>
+            <td>${escapeHTML(nc['الجنس'])}</td>
+            <td>${escapeHTML(nc['الجنسية'])}</td>
+            <td>${escapeHTML(nc['تاريخ_القبول'])}</td>
+            <td>${escapeHTML(nc['المعدل'])}</td>
         </tr>`;
     }).join('');
 
     if (filtered.length > MAX_SHOW) {
-        tbody.innerHTML += `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:16px">
+        tbody.innerHTML += `<tr><td colspan="12" style="text-align:center;color:var(--text-light);padding:16px">
             يتم عرض أول ${MAX_SHOW} سجل. استخدم الفلاتر لتصفية النتائج أو صدّر Excel لرؤية الكل.
         </td></tr>`;
     }
@@ -4266,6 +4817,7 @@ function exportNCExcel() {
     const progFilter = document.getElementById('nc-prog').value;
     const degFilter = document.getElementById('nc-deg').value;
     const statusFilter = document.getElementById('nc-status').value;
+    const branchFilter = document.getElementById('nc-branch').value;
     const search = document.getElementById('nc-search').value.trim().toLowerCase();
 
     let filtered = ncData;
@@ -4273,15 +4825,16 @@ function exportNCExcel() {
     if (progFilter) filtered = filtered.filter(g => g['التخصص'] === progFilter);
     if (degFilter) filtered = filtered.filter(g => g['الدرجة'] === degFilter);
     if (statusFilter) filtered = filtered.filter(g => g['الحالة'] === statusFilter);
+    if (branchFilter) filtered = filtered.filter(g => normalizeBranchName(g['الفرع']) === branchFilter);
     if (search) filtered = filtered.filter(g =>
-        g['الاسم'].toLowerCase().includes(search) || g['الرقم_الجامعي'].includes(search)
+        String(g['الاسم'] || '').toLowerCase().includes(search) || String(g['الرقم_الجامعي'] || '').includes(search)
     );
 
     const rows = [
-        ['آخر سنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الحالة','الجنس','الجنسية','تاريخ القبول','المعدل','نوع الدراسة'],
+        ['آخر سنة','الرقم الجامعي','الاسم','التخصص','الدرجة','القسم','الفرع','الحالة','الجنس','الجنسية','تاريخ القبول','المعدل','نوع الدراسة'],
         ...filtered.map(nc => [
             fmtYear(nc['آخر_سنة']), nc['الرقم_الجامعي'], nc['الاسم'], nc['التخصص'], nc['الدرجة'],
-            nc['القسم'], nc['الحالة'], nc['الجنس'], nc['الجنسية'], nc['تاريخ_القبول'], nc['المعدل'], nc['نوع_الدراسة']
+            nc['القسم'], nc['الفرع'] || '', nc['الحالة'], nc['الجنس'], nc['الجنسية'], nc['تاريخ_القبول'], nc['المعدل'], nc['نوع_الدراسة']
         ])
     ];
     const ws = XLSX.utils.aoa_to_sheet(rows);
@@ -4358,6 +4911,7 @@ function refreshStudentCategoryBaseFilters() {
     const yearSelect = document.getElementById('student-cat-year');
     const deptSelect = document.getElementById('student-cat-dept');
     const degreeSelect = document.getElementById('student-cat-degree');
+    const branchSelect = document.getElementById('student-cat-branch');
     const statusSelect = document.getElementById('student-cat-status');
     const genderSelect = document.getElementById('student-cat-gender');
 
@@ -4376,10 +4930,13 @@ function refreshStudentCategoryBaseFilters() {
     const genders = [...new Set(studentDetailData.map(row => row['الجنس']).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b, 'ar'))
         .map(value => ({ value, label: value }));
+    const branches = getOrderedBranchNames(studentDetailData.map(row => row['الفرع']))
+        .map(value => ({ value, label: value }));
 
     setSelectOptions(yearSelect, years, 'كل السنوات');
     setSelectOptions(deptSelect, departments, 'كل الأقسام');
     setSelectOptions(degreeSelect, degrees, 'كل الدرجات');
+    setSelectOptions(branchSelect, branches, 'كل الفروع');
     setSelectOptions(statusSelect, statuses, 'كل الحالات');
     setSelectOptions(genderSelect, genders, 'الكل');
     refreshStudentCategoryProgramOptions();
@@ -4390,6 +4947,7 @@ function resetStudentCategoriesView() {
     const deptSelect = document.getElementById('student-cat-dept');
     const degreeSelect = document.getElementById('student-cat-degree');
     const programSelect = document.getElementById('student-cat-prog');
+    const branchSelect = document.getElementById('student-cat-branch');
     const statusSelect = document.getElementById('student-cat-status');
     const genderSelect = document.getElementById('student-cat-gender');
     const searchInput = document.getElementById('student-cat-search');
@@ -4400,6 +4958,7 @@ function resetStudentCategoriesView() {
     if (degreeSelect) degreeSelect.value = '';
     refreshStudentCategoryProgramOptions();
     if (programSelect) programSelect.value = '';
+    if (branchSelect) branchSelect.value = '';
     if (statusSelect) statusSelect.value = '';
     if (genderSelect) genderSelect.value = '';
     if (searchInput) searchInput.value = '';
@@ -4415,6 +4974,7 @@ function getStudentCategoryFilteredRows() {
     const dept = document.getElementById('student-cat-dept')?.value || '';
     const degree = document.getElementById('student-cat-degree')?.value || '';
     const program = document.getElementById('student-cat-prog')?.value || '';
+    const branch = document.getElementById('student-cat-branch')?.value || '';
     const status = document.getElementById('student-cat-status')?.value || '';
     const gender = document.getElementById('student-cat-gender')?.value || '';
     const search = normalizeArabicText(document.getElementById('student-cat-search')?.value || '').toLowerCase();
@@ -4424,6 +4984,7 @@ function getStudentCategoryFilteredRows() {
     if (dept) rows = rows.filter(row => row['القسم'] === dept);
     if (degree) rows = rows.filter(row => row['الدرجة'] === degree);
     if (program) rows = rows.filter(row => row['التخصص'] === program);
+    if (branch) rows = rows.filter(row => normalizeBranchName(row['الفرع']) === branch);
     if (status) rows = rows.filter(row => row['الحالة'] === status);
     if (gender) rows = rows.filter(row => row['الجنس'] === gender);
     if (search) rows = rows.filter(row => row._searchText.includes(search));
@@ -4436,6 +4997,7 @@ function buildStudentCategoryCaption(totalRows) {
     const dept = document.getElementById('student-cat-dept')?.value || '';
     const degree = document.getElementById('student-cat-degree')?.value || '';
     const program = document.getElementById('student-cat-prog')?.value || '';
+    const branch = document.getElementById('student-cat-branch')?.value || '';
     const status = document.getElementById('student-cat-status')?.value || '';
     const gender = document.getElementById('student-cat-gender')?.value || '';
     const search = String(document.getElementById('student-cat-search')?.value || '').trim();
@@ -4444,6 +5006,7 @@ function buildStudentCategoryCaption(totalRows) {
     if (dept) labels.push(`القسم: ${dept}`);
     if (degree) labels.push(`الدرجة: ${degree}`);
     if (program) labels.push(`البرنامج: ${program}`);
+    if (branch) labels.push(`الفرع: ${branch} (السجلات الممكن إسنادها فقط)`);
     if (status) labels.push(`الحالة: ${status}`);
     if (gender) labels.push(`الجنس: ${gender}`);
     if (search) labels.push(`البحث: ${search}`);
@@ -4508,7 +5071,7 @@ function buildStudentCategoryReport() {
         summary.lowest == null ? '—' : fmtNumFlex(summary.lowest, 2)
     ]);
 
-    const detailHeaders = ['السنة', 'الرقم الجامعي', 'الاسم', 'البرنامج', 'الدرجة', 'القسم', 'الحالة', 'الجنس', 'المعدل', 'التقدير الرسمي', 'الفئة', 'مصدر الملف'];
+    const detailHeaders = ['السنة', 'الرقم الجامعي', 'الاسم', 'البرنامج', 'الدرجة', 'القسم', 'الفرع', 'الحالة', 'الجنس', 'المعدل', 'التقدير الرسمي', 'الفئة', 'مصدر الملف'];
     const detailRows = detailRowsSource.map(row => [
         fmtYear(row['السنة']),
         row['الرقم_الجامعي'],
@@ -4516,6 +5079,7 @@ function buildStudentCategoryReport() {
         row['التخصص'],
         row['الدرجة'],
         row['القسم'],
+        row['الفرع'] || '',
         row['الحالة'],
         row['الجنس'],
         row['المعدل'],
@@ -4529,6 +5093,9 @@ function buildStudentCategoryReport() {
         document.getElementById('student-cat-year')?.value ? fmtYear(document.getElementById('student-cat-year').value) : 'كل-السنوات',
         document.getElementById('student-cat-prog')?.value || document.getElementById('student-cat-dept')?.value || 'كل-البرامج'
     ];
+    if (document.getElementById('student-cat-branch')?.value) {
+        filenameParts.push(document.getElementById('student-cat-branch').value);
+    }
 
     return {
         totalRows,
@@ -4611,22 +5178,23 @@ function renderStudentCategoryDetailTable(report) {
     tbody.innerHTML = showing.map((row, index) => `
         <tr class="${index % 2 ? 'alt' : ''}">
             <td>${index + 1}</td>
-            <td>${fmtYear(row['السنة'])}</td>
-            <td>${row['الرقم_الجامعي']}</td>
-            <td>${row['الاسم']}</td>
-            <td>${row['التخصص']}</td>
-            <td>${row['الدرجة']}</td>
-            <td>${row['القسم']}</td>
-            <td>${row['الحالة']}</td>
-            <td>${row['الجنس']}</td>
-            <td>${row['المعدل']}</td>
-            <td>${row._officialEstimate}</td>
-            <td>${row._reportCategory}</td>
+            <td>${escapeHTML(fmtYear(row['السنة']))}</td>
+            <td>${escapeHTML(row['الرقم_الجامعي'])}</td>
+            <td>${escapeHTML(row['الاسم'])}</td>
+            <td>${escapeHTML(row['التخصص'])}</td>
+            <td>${escapeHTML(row['الدرجة'])}</td>
+            <td>${escapeHTML(row['القسم'])}</td>
+            <td>${escapeHTML(row['الفرع'] || '—')}</td>
+            <td>${escapeHTML(row['الحالة'])}</td>
+            <td>${escapeHTML(row['الجنس'])}</td>
+            <td>${escapeHTML(row['المعدل'])}</td>
+            <td>${escapeHTML(row._officialEstimate)}</td>
+            <td>${escapeHTML(row._reportCategory)}</td>
         </tr>
     `).join('');
 
     if (report.detailRowsSource.length > MAX_SHOW) {
-        tbody.innerHTML += `<tr><td colspan="12" style="text-align:center;color:var(--text-light);padding:16px">
+        tbody.innerHTML += `<tr><td colspan="13" style="text-align:center;color:var(--text-light);padding:16px">
             يتم عرض أول ${MAX_SHOW} سجل فقط داخل الصفحة. التصدير يشمل جميع السجلات المطابقة.
         </td></tr>`;
     }
@@ -4720,7 +5288,7 @@ function initStudentCategoriesView() {
         });
     });
 
-    ['student-cat-prog', 'student-cat-status', 'student-cat-gender'].forEach(id => {
+    ['student-cat-prog', 'student-cat-branch', 'student-cat-status', 'student-cat-gender'].forEach(id => {
         document.getElementById(id)?.addEventListener('change', () => {
             document.getElementById('student-cat-results')?.classList.add('hidden');
         });
@@ -4799,17 +5367,26 @@ function exportStudentCategoriesCSV() {
 // الاستوديو الإحصائي
 // ========================================
 function analyticsSum(records, getter) {
-    return records.reduce((sum, row) => {
-        const value = Number(getter(row));
-        return Number.isFinite(value) ? sum + value : sum;
-    }, 0);
+    let sum = 0;
+    let count = 0;
+    records.forEach(row => {
+        const rawValue = getter(row);
+        if (rawValue == null || rawValue === '') return;
+        const value = Number(rawValue);
+        if (!Number.isFinite(value)) return;
+        sum += value;
+        count++;
+    });
+    return count ? sum : null;
 }
 
 function analyticsAverage(records, getter) {
     let sum = 0;
     let count = 0;
     records.forEach(row => {
-        const value = Number(getter(row));
+        const rawValue = getter(row);
+        if (rawValue == null || rawValue === '') return;
+        const value = Number(rawValue);
         if (!Number.isFinite(value)) return;
         sum += value;
         count++;
@@ -4821,9 +5398,12 @@ function analyticsWeightedAverage(records, valueGetter, weightGetter, fallbackWe
     let weightedSum = 0;
     let totalWeight = 0;
     records.forEach(row => {
-        const value = Number(valueGetter(row));
+        const rawValue = valueGetter(row);
+        if (rawValue == null || rawValue === '') return;
+        const value = Number(rawValue);
         if (!Number.isFinite(value)) return;
-        const rawWeight = weightGetter ? Number(weightGetter(row)) : fallbackWeight;
+        const weightValue = weightGetter ? weightGetter(row) : fallbackWeight;
+        const rawWeight = weightValue == null || weightValue === '' ? NaN : Number(weightValue);
         const weight = Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : fallbackWeight;
         weightedSum += value * weight;
         totalWeight += weight;
@@ -4936,7 +5516,7 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'dept', label: 'القسم', getValue: row => row.Dept_aName },
                 { id: 'degree', label: 'الدرجة', getValue: row => row.Degree_aName },
                 { id: 'program', label: 'البرنامج', getValue: row => row.Major_aName },
-                { id: 'branch', label: 'الفرع', getValue: () => '', options: () => availableFacultyBranches },
+                { id: 'branch', label: 'الفرع', getValue: () => '', options: () => getOrderedBranchNames(availableFacultyBranches) },
             ],
             groups: [
                 { id: 'year', label: 'السنة', getValue: row => parseInt(row.Semester, 10) || null, format: value => fmtYear(value), sort: 'numeric' },
@@ -4953,6 +5533,7 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'students_female', label: 'الطالبات', unit: 'طالبة', compute: records => analyticsSum(records, row => row.students_female), format: analyticsFormatCount },
                 { id: 'students_new', label: 'الطلاب المستجدون', unit: 'طالب', compute: records => analyticsSum(records, row => row.students_new), format: analyticsFormatCount },
                 { id: 'graduates_total', label: 'إجمالي الخريجين', unit: 'خريج', compute: records => analyticsSum(records, row => row.graduates_total), format: analyticsFormatCount },
+                { id: 'graduates_branch_matched', label: 'خريجون أمكن إسنادهم للفرع', unit: 'خريج', compute: records => analyticsSum(records, row => row.graduates_branch_matched), format: analyticsFormatCount },
                 { id: 'graduates_ontime', label: 'الخريجون بالوقت المحدد', unit: 'خريج', compute: records => analyticsSum(records, row => row.graduates_ontime), format: analyticsFormatCount },
                 { id: 'sections_total', label: 'إجمالي الشعب', unit: 'شعبة', compute: records => analyticsSum(records, row => row.sections_total), format: analyticsFormatCount },
                 { id: 'faculty_fte_total', label: 'إجمالي هيئة التدريس (FTE)', unit: 'عضو', compute: records => analyticsSum(records, row => getFacultyBaseForRatio(row)), format: value => analyticsFormatDecimal(value, 2) },
@@ -5102,6 +5683,72 @@ function getAnalyticsSourceDefinitions() {
                 },
             ],
         },
+        faculty: {
+            key: 'faculty',
+            label: 'قائمة أعضاء هيئة التدريس',
+            rowLabel: 'سجل عضو هيئة تدريس',
+            getRows: () => facultyRosterData,
+            getYear: row => row.year,
+            searchText: row => [
+                row.name, row.id, row.rank, row.department, row.branch,
+                row.gender, row.nationality, row.email
+            ].join(' '),
+            filters: [
+                { id: 'dept', label: 'القسم', getValue: row => row.department },
+                { id: 'rank', label: 'الرتبة', getValue: row => row.rank },
+                { id: 'branch', label: 'الفرع', getValue: row => row.branch },
+                { id: 'gender', label: 'الجنس', getValue: row => row.gender },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row.nationality },
+                { id: 'active', label: 'الحالة', getValue: row => row.active === 'نعم' ? 'نشط' : 'غير نشط' },
+            ],
+            groups: [
+                { id: 'year', label: 'السنة', getValue: row => row.year, format: value => fmtYear(value), sort: 'numeric' },
+                { id: 'dept', label: 'القسم', getValue: row => row.department, format: value => analyticsText(value), sort: 'text' },
+                { id: 'rank', label: 'الرتبة', getValue: row => row.rank, format: value => analyticsText(value), sort: 'text' },
+                { id: 'branch', label: 'الفرع', getValue: row => row.branch, format: value => analyticsText(value), sort: 'text' },
+                { id: 'gender', label: 'الجنس', getValue: row => row.gender, format: value => analyticsText(value), sort: 'text' },
+                { id: 'nationality', label: 'الجنسية', getValue: row => row.nationality, format: value => analyticsText(value), sort: 'text' },
+            ],
+            defaultMetrics: ['record_count', 'active_count'],
+            metrics: [
+                { id: 'record_count', label: 'عدد السجلات', unit: 'عضو', compute: records => records.length, format: analyticsFormatCount },
+                { id: 'active_count', label: 'الأعضاء النشطون', unit: 'عضو', compute: records => analyticsCountWhere(records, row => row.active === 'نعم'), format: analyticsFormatCount },
+                { id: 'inactive_count', label: 'الأعضاء غير النشطين', unit: 'عضو', compute: records => analyticsCountWhere(records, row => row.active !== 'نعم'), format: analyticsFormatCount },
+                { id: 'distinct_members', label: 'الأعضاء المختلفون', unit: 'عضو', compute: records => analyticsDistinctCount(records, row => row.id), format: analyticsFormatCount },
+            ],
+        },
+        entrants: {
+            key: 'entrants',
+            label: 'سجل المستجدين في الفروع',
+            rowLabel: 'سجل مستجد',
+            getRows: () => entrantData,
+            getYear: row => parseInt(row.year, 10) || null,
+            searchText: row => [
+                row.name,
+                row.student_id,
+                row.program,
+                row.degree,
+                row.department,
+                row.branch,
+                row.gender
+            ].join(' '),
+            filters: [
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row.branch), options: rows => getOrderedBranchNames(rows.map(row => row.branch)) },
+                { id: 'gender', label: 'الجنس', getValue: row => row.gender },
+            ],
+            groups: [
+                { id: 'year', label: 'السنة', getValue: row => parseInt(row.year, 10) || null, format: value => fmtYear(value), sort: 'numeric' },
+                { id: 'semester', label: 'الفصل', getValue: row => parseInt(row.semester, 10) || null, format: value => formatAcademicSemester(value), sort: 'numeric' },
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row.branch), format: value => analyticsText(value), sort: 'text' },
+                { id: 'gender', label: 'الجنس', getValue: row => row.gender, format: value => analyticsText(value), sort: 'text' },
+            ],
+            defaultMetrics: ['record_count', 'male_count', 'female_count'],
+            metrics: [
+                { id: 'record_count', label: 'عدد المستجدين', unit: 'طالب', compute: records => records.length, format: analyticsFormatCount },
+                { id: 'male_count', label: 'عدد الذكور', unit: 'طالب', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row.gender).includes('ذكر')), format: analyticsFormatCount },
+                { id: 'female_count', label: 'عدد الإناث', unit: 'طالبة', compute: records => analyticsCountWhere(records, row => normalizeArabicText(row.gender).includes('أنث')), format: analyticsFormatCount },
+            ],
+        },
         graduates: {
             key: 'graduates',
             label: 'سجل الخريجين',
@@ -5113,12 +5760,14 @@ function getAnalyticsSourceDefinitions() {
                 row['الرقم_الجامعي'],
                 row['التخصص'],
                 row['الدرجة'],
-                row['القسم']
+                row['القسم'],
+                row['الفرع']
             ].join(' '),
             filters: [
                 { id: 'dept', label: 'القسم', getValue: row => row['القسم'] },
                 { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'] },
                 { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'] },
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row['الفرع']), options: rows => getOrderedBranchNames(rows.map(row => row['الفرع'])) },
                 { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'] },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'] },
             ],
@@ -5127,6 +5776,7 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'dept', label: 'القسم', getValue: row => row['القسم'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row['الفرع']), format: value => analyticsText(value), sort: 'text' },
                 { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'], format: value => analyticsText(value), sort: 'text' },
             ],
@@ -5176,12 +5826,14 @@ function getAnalyticsSourceDefinitions() {
                 row['التخصص'],
                 row['الدرجة'],
                 row['القسم'],
+                row['الفرع'],
                 row['الحالة']
             ].join(' '),
             filters: [
                 { id: 'dept', label: 'القسم', getValue: row => row['القسم'] },
                 { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'] },
                 { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'] },
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row['الفرع']), options: rows => getOrderedBranchNames(rows.map(row => row['الفرع'])) },
                 { id: 'status', label: 'الحالة', getValue: row => row['الحالة'] },
                 { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'] },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'] },
@@ -5192,6 +5844,7 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'dept', label: 'القسم', getValue: row => row['القسم'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'degree', label: 'الدرجة', getValue: row => row['الدرجة'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'program', label: 'البرنامج', getValue: row => row['التخصص'], format: value => analyticsText(value), sort: 'text' },
+                { id: 'branch', label: 'الفرع', getValue: row => normalizeBranchName(row['الفرع']), format: value => analyticsText(value), sort: 'text' },
                 { id: 'status', label: 'الحالة', getValue: row => row['الحالة'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'gender', label: 'الجنس', getValue: row => row['الجنس'], format: value => analyticsText(value), sort: 'text' },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row['الجنسية'], format: value => analyticsText(value), sort: 'text' },
@@ -5392,8 +6045,10 @@ function renderAnalyticsFilters(source) {
         const rawValues = typeof field.options === 'function'
             ? field.options(sourceRows)
             : [...new Set(sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean))];
-        const values = [...new Set((rawValues || []).filter(Boolean))]
-            .sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+        const values = [...new Set((rawValues || []).filter(Boolean))];
+        if (typeof field.options !== 'function') {
+            values.sort((a, b) => String(a).localeCompare(String(b), 'ar'));
+        }
         return `<div class="form-group">
             <label>${field.label}</label>
             <select id="analytics-filter-${field.id}">
@@ -5460,7 +6115,15 @@ function getAnalyticsFilteredRows(source) {
         const wanted = String(select?.value || '').trim();
         if (!wanted) return;
         if (source.key === 'programs' && field.id === 'branch') {
-            rows = rows.map(row => buildProgramDisplayDataFromRow(row, wanted));
+            rows = rows
+                .filter(row => {
+                    if (isIslamicStudiesBachelor(row)) {
+                        const year = parseInt(row.Semester, 10) || null;
+                        return Boolean(getIslamicBranchMetric(row, year, wanted));
+                    }
+                    return wanted === 'الحوية';
+                })
+                .map(row => buildProgramDisplayDataFromRow(row, wanted));
             return;
         }
         rows = rows.filter(row => analyticsText(field.getValue(row), '') === wanted);
@@ -5523,13 +6186,29 @@ function buildAnalyticsCaption(report) {
     if (report.searchText) {
         parts.push(`البحث: ${report.searchText}`);
     }
+    if (report.source.key === 'programs' && report.branchFilterValue) {
+        parts.push('قراءة الفرع: سجلات مرصودة متحفظة، وليست إجماليات رسمية شاملة');
+    }
     return parts.join(' | ');
 }
 
 function runAnalyticsReport() {
     const source = getAnalyticsCurrentSource();
     const mode = document.getElementById('analytics-mode')?.value || 'summary';
-    const metricDefs = getSelectedAnalyticsMetricDefs(source);
+    const branchFilterValue = source.key === 'programs' ? getAnalyticsSelectedBranchValue() : '';
+    const selectedMetricDefs = getSelectedAnalyticsMetricDefs(source);
+    const branchMetricLabels = {
+        students_total: 'المنتظمون المرصودون',
+        students_male: 'الطلاب الذكور المرصودون',
+        students_female: 'الطالبات المرصودات',
+        students_new: 'المستجدون المرصودون'
+    };
+    const metricDefs = branchFilterValue
+        ? selectedMetricDefs.map(metric => ({
+            ...metric,
+            label: branchMetricLabels[metric.id] || metric.label
+        }))
+        : selectedMetricDefs;
 
     if (!metricDefs.length) {
         alert('اختر إحصائية واحدة على الأقل قبل بناء التقرير.');
@@ -5551,8 +6230,6 @@ function runAnalyticsReport() {
             return value ? `${field.label}: ${value}` : '';
         })
         .filter(Boolean);
-    const branchFilterValue = source.key === 'programs' ? getAnalyticsSelectedBranchValue() : '';
-
     const yearLabel = buildAnalyticsYearLabel(filteredRows, source);
     const searchText = String(document.getElementById('analytics-search')?.value || '').trim();
     let reportRows = [];
@@ -5625,6 +6302,7 @@ function runAnalyticsReport() {
     currentAnalyticsReport = {
         source,
         mode,
+        branchFilterValue,
         yearLabel,
         searchText,
         activeFilters,
@@ -5745,7 +6423,7 @@ function renderAnalyticsChart() {
         const labels = currentAnalyticsReport.metricDefs.map(metric => metric.label);
         const data = currentAnalyticsReport.metricDefs.map(metric => {
             const value = currentAnalyticsReport.rows[0].metricValues[metric.id];
-            return value == null ? 0 : Number(value);
+            return value == null ? null : Number(value);
         });
         if (cardTitle) cardTitle.textContent = 'التمثيل البياني للإحصاءات المختارة';
         analyticsChart = new Chart(ctx, {
@@ -5790,7 +6468,9 @@ function renderAnalyticsChart() {
                     (primaryGroup.format ? primaryGroup.format(row.primaryValue) : analyticsText(row.primaryValue)) === primaryLabel &&
                     (secondaryGroup.format ? secondaryGroup.format(row.secondaryValue) : analyticsText(row.secondaryValue)) === secondaryLabel
                 );
-                return found ? (Number(found.metricValues[firstMetric.id]) || 0) : 0;
+                if (!found) return 0;
+                const value = found.metricValues[firstMetric.id];
+                return value == null ? null : Number(value);
             }),
             backgroundColor: CHART_COLORS[index % CHART_COLORS.length],
             borderRadius: 4
@@ -5820,7 +6500,7 @@ function renderAnalyticsChart() {
     );
     const data = chartRows.map(row => {
         const value = row.metricValues[firstMetric.id];
-        return value == null ? 0 : Number(value);
+        return value == null ? null : Number(value);
     });
 
     if (cardTitle) {
