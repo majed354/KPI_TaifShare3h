@@ -133,7 +133,7 @@ let charts = {};       // Chart instances
 let currentProg = null;// for export
 let compareThirdEnabled = false;
 let gradData = [];     // graduate records
-let facultyRosterData = []; // faculty roster for 1446 and 1447
+let facultyRosterData = []; // faculty roster for 1445 through 1448
 let entrantData = [];  // accepted new-entrant records for Islamic Studies branches
 let islamicBranchData = null;
 let ncData = [];       // non-completer records
@@ -620,6 +620,27 @@ function buildProgramDataKey(year, dept, programName, degreeName) {
 
 function normalizeBranchName(branch) {
     return String(branch || '').trim();
+}
+
+function getFacultyBranchNames(branch) {
+    return [...new Set(
+        String(branch || '')
+            .split(/[|,،]/)
+            .map(normalizeBranchName)
+            .filter(Boolean)
+    )];
+}
+
+function getBranchFromTeachingLocation(location, allowedBranches = []) {
+    const value = String(location || '').trim();
+    const candidates = allowedBranches.length ? allowedBranches : getIslamicBranchNames();
+    return candidates.find(branch => {
+        const normalized = normalizeBranchName(branch);
+        const withoutArticle = normalized.replace(/^ال/, '');
+        return [normalized, withoutArticle]
+            .filter(Boolean)
+            .some(alias => value.includes(alias));
+    }) || '';
 }
 
 function buildProgramBranchDataKey(programKey, branch) {
@@ -1683,7 +1704,7 @@ async function applyResearchIndicatorsFromActivities(rows) {
 
     availableFacultyBranches = [...new Set([
         ...availableFacultyBranches,
-        ...facultyRows.map(row => normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))).filter(Boolean)
+        ...facultyRows.flatMap(row => getFacultyBranchNames(pickCell(row, ['branch', 'Branch', 'الفرع'])))
     ])].sort((a, b) => a.localeCompare(b, 'ar'));
 
     // مطابقة موقع الأنشطة: دمج البيانات الحية من Google Sheets فوق CSV
@@ -1695,8 +1716,8 @@ async function applyResearchIndicatorsFromActivities(rows) {
     const citationsMap = (configObj && configObj.citations_ranges) ? configObj.citations_ranges : null;
 
     // فهارس أعضاء هيئة التدريس لمطابقة منطق موقع الأنشطة
-    const deptIds = {};               // dept -> Set(all ids) عبر كل السنوات
-    const deptBranchIds = {};         // dept|branch -> Set(all ids)
+    const authorDeptsByYearId = {};   // year|id -> Set(depts)
+    const authorDeptBranchesByYearId = {}; // year|id -> Set(dept|branch)
     const eligibleIdsByYearDept = {}; // year|dept -> Set(ids) (نشط + مؤهل للـ KPI)
     const eligibleIdsByYearDeptBranch = {}; // year|dept|branch -> Set(ids)
     facultyRows.forEach(row => {
@@ -1707,16 +1728,17 @@ async function applyResearchIndicatorsFromActivities(rows) {
         const active = pickCell(row, ['active', 'Active']) === 'نعم';
         const dept = normalizeDepartment(pickCell(row, ['department', 'Department']));
         const rank = normalizeRank(pickCell(row, ['rank', 'Rank']));
-        const branch = normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']));
+        const branches = getFacultyBranchNames(pickCell(row, ['branch', 'Branch', 'الفرع']));
 
         if (dept) {
-            if (!deptIds[dept]) deptIds[dept] = new Set();
-            deptIds[dept].add(id);
-            if (branch) {
+            const authorYearKey = `${year}|${id}`;
+            if (!authorDeptsByYearId[authorYearKey]) authorDeptsByYearId[authorYearKey] = new Set();
+            authorDeptsByYearId[authorYearKey].add(dept);
+            branches.forEach(branch => {
                 const deptBranchKey = `${dept}|${branch}`;
-                if (!deptBranchIds[deptBranchKey]) deptBranchIds[deptBranchKey] = new Set();
-                deptBranchIds[deptBranchKey].add(id);
-            }
+                if (!authorDeptBranchesByYearId[authorYearKey]) authorDeptBranchesByYearId[authorYearKey] = new Set();
+                authorDeptBranchesByYearId[authorYearKey].add(deptBranchKey);
+            });
         }
         if (!active || !dept) return;
 
@@ -1724,28 +1746,12 @@ async function applyResearchIndicatorsFromActivities(rows) {
             const key = buildYearDeptKey(year, dept);
             if (!eligibleIdsByYearDept[key]) eligibleIdsByYearDept[key] = new Set();
             eligibleIdsByYearDept[key].add(id);
-            if (branch) {
+            branches.forEach(branch => {
                 const branchKey = buildYearDeptBranchKey(year, dept, branch);
                 if (!eligibleIdsByYearDeptBranch[branchKey]) eligibleIdsByYearDeptBranch[branchKey] = new Set();
                 eligibleIdsByYearDeptBranch[branchKey].add(id);
-            }
+            });
         }
-    });
-
-    // author -> depts (من جميع سنوات faculty كما في موقع الأنشطة)
-    const authorDeptMap = {};
-    const authorDeptBranchMap = {};
-    Object.entries(deptIds).forEach(([dept, idsSet]) => {
-        idsSet.forEach(fid => {
-            if (!authorDeptMap[fid]) authorDeptMap[fid] = new Set();
-            authorDeptMap[fid].add(dept);
-        });
-    });
-    Object.entries(deptBranchIds).forEach(([deptBranchKey, idsSet]) => {
-        idsSet.forEach(fid => {
-            if (!authorDeptBranchMap[fid]) authorDeptBranchMap[fid] = new Set();
-            authorDeptBranchMap[fid].add(deptBranchKey);
-        });
     });
 
     // aggregates per year+dept
@@ -1767,10 +1773,11 @@ async function applyResearchIndicatorsFromActivities(rows) {
         const departmentsTouched = new Set();
         const deptBranchesTouched = new Set();
         authorIds.forEach(fid => {
-            const depts = authorDeptMap[fid];
+            const authorYearKey = `${year}|${fid}`;
+            const depts = authorDeptsByYearId[authorYearKey];
             if (!depts) return;
             depts.forEach(d => departmentsTouched.add(d));
-            const deptBranches = authorDeptBranchMap[fid];
+            const deptBranches = authorDeptBranchesByYearId[authorYearKey];
             if (deptBranches) deptBranches.forEach(key => deptBranchesTouched.add(key));
         });
 
@@ -1905,9 +1912,10 @@ async function applyTeachingBasedFacultyFTE(rows) {
     if (!years.length) return { applied: false, reason: 'no-years' };
 
     const stamp = Date.now();
-    const [plansText, facultyText] = await Promise.all([
+    const [plansText, facultyText, teachingMeta] = await Promise.all([
         fetchTextIfExists(`data/new_all_plans.csv?t=${stamp}`),
-        fetchTextIfExists(`data/faculty.csv?t=${stamp}`)
+        fetchTextIfExists(`data/faculty.csv?t=${stamp}`),
+        fetchJSONIfExists(`data/teaching/meta.json?t=${stamp}`)
     ]);
 
     if (!plansText || !facultyText) {
@@ -1916,13 +1924,14 @@ async function applyTeachingBasedFacultyFTE(rows) {
 
     const planRows = parseFlatCSV(plansText, ';');
     const facultyRows = parseFlatCSV(facultyText, ',');
+    const teachingFacultyIndex = teachingMeta?.faculty_index || {};
     if (!planRows.length || !facultyRows.length) {
         return { applied: false, reason: 'empty-plans-or-faculty' };
     }
 
     availableFacultyBranches = [...new Set([
         ...availableFacultyBranches,
-        ...facultyRows.map(row => normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))).filter(Boolean)
+        ...facultyRows.flatMap(row => getFacultyBranchNames(pickCell(row, ['branch', 'Branch', 'الفرع'])))
     ])].sort((a, b) => a.localeCompare(b, 'ar'));
 
     const yearPayloads = await Promise.all(
@@ -2039,6 +2048,8 @@ async function applyTeachingBasedFacultyFTE(rows) {
     Object.values(facultyProfilesById).forEach(list => list.sort((a,b) => a.year - b.year));
 
     const facultyProgramLoads = {}; // year|fid -> {programKey: weighted_load}
+    const facultyProgramBranchLoads = {}; // year|fid -> {programKey: {branch: weighted_load}}
+    const teachingRankByFaculty = {}; // year|fid -> rank from the same-year roster or teaching metadata
     const supportByProgramKey = {};
     programFacultyFteByBranchKey = {};
 
@@ -2056,8 +2067,12 @@ async function applyTeachingBasedFacultyFTE(rows) {
             const fid = String(rec.fid || '').trim();
             if (!fid) return;
             const facKey = `${year}|${fid}`;
+            const directProfile = facultyProfilesByYearId[facKey];
             const profile = resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid);
-            const deptHint = normalizeDepartment(profile?.dept || '');
+            const teachingMetaProfile = teachingFacultyIndex[fid] || {};
+            const teachingRank = normalizeRank(directProfile?.rank || teachingMetaProfile.r || profile?.rank || '');
+            const deptHint = normalizeDepartment(directProfile?.dept || teachingMetaProfile.d || profile?.dept || '');
+            teachingRankByFaculty[facKey] = teachingRank;
             if (!facultyProgramLoads[facKey]) facultyProgramLoads[facKey] = {};
 
             const courses = Array.isArray(rec.cs) ? rec.cs : [];
@@ -2098,9 +2113,19 @@ async function applyTeachingBasedFacultyFTE(rows) {
                 }
                 if (!candidateProgramKeys.length) return;
 
+                const profileBranches = getFacultyBranchNames(profile?.branch || '');
+                const sectionBranch = getBranchFromTeachingLocation(c.l);
+                const allocationBranch = sectionBranch || (profileBranches.length === 1 ? profileBranches[0] : '');
                 const weights = buildWeights(candidateProgramKeys, studentsByProgramKey);
                 weights.forEach(w => {
-                    facultyProgramLoads[facKey][w.key] = (facultyProgramLoads[facKey][w.key] || 0) + (load * w.weight);
+                    const weightedLoad = load * w.weight;
+                    facultyProgramLoads[facKey][w.key] = (facultyProgramLoads[facKey][w.key] || 0) + weightedLoad;
+                    if (allocationBranch) {
+                        if (!facultyProgramBranchLoads[facKey]) facultyProgramBranchLoads[facKey] = {};
+                        if (!facultyProgramBranchLoads[facKey][w.key]) facultyProgramBranchLoads[facKey][w.key] = {};
+                        const branchLoads = facultyProgramBranchLoads[facKey][w.key];
+                        branchLoads[allocationBranch] = (branchLoads[allocationBranch] || 0) + weightedLoad;
+                    }
                 });
 
                 const supportMap = new Map();
@@ -2111,7 +2136,7 @@ async function applyTeachingBasedFacultyFTE(rows) {
 
                 const sectionStudents = Number(c.e) || 0;
                 const sectionGender = detectSectionGender(c);
-                const branchName = normalizeBranchName(profile?.branch || '');
+                const supportBranchNames = allocationBranch ? [allocationBranch] : [];
                 supportMap.forEach((planKey, pKey) => {
                     const bucket = getSupportBucket(pKey);
                     const exclusiveSet = programExclusiveCodes[planKey];
@@ -2119,8 +2144,10 @@ async function applyTeachingBasedFacultyFTE(rows) {
                     const isExclusive = Boolean(exclusiveSet && exclusiveSet.has(code));
                     const isNonShared = Boolean(nonSharedSet && nonSharedSet.has(code));
                     const targetBuckets = [bucket];
-                    const branchBucket = getRawTeachingSupportBranchBucket(bucket, branchName);
-                    if (branchBucket) targetBuckets.push(branchBucket);
+                    supportBranchNames.forEach(branchName => {
+                        const branchBucket = getRawTeachingSupportBranchBucket(bucket, branchName);
+                        if (branchBucket) targetBuckets.push(branchBucket);
+                    });
 
                     targetBuckets.forEach(targetBucket => {
                         targetBucket.totalSections++;
@@ -2148,7 +2175,7 @@ async function applyTeachingBasedFacultyFTE(rows) {
 
                         if (!targetBucket.facultyById[fid]) {
                             targetBucket.facultyById[fid] = {
-                                rank: normalizeRank(profile?.rank || ''),
+                                rank: teachingRank,
                                 nationality: String(profile?.nationality || '').trim(),
                                 gender: String(profile?.gender || '').trim(),
                                 branch: String(profile?.branch || '').trim(),
@@ -2165,7 +2192,7 @@ async function applyTeachingBasedFacultyFTE(rows) {
                             };
                         }
                         const facultyEntry = targetBucket.facultyById[fid];
-                        facultyEntry.rank = facultyEntry.rank || normalizeRank(profile?.rank || '');
+                        facultyEntry.rank = facultyEntry.rank || teachingRank;
                         if (!facultyEntry.nationality && profile?.nationality) {
                             facultyEntry.nationality = String(profile.nationality).trim();
                         }
@@ -2208,15 +2235,25 @@ async function applyTeachingBasedFacultyFTE(rows) {
         const [yearStr, fid] = facKey.split('|');
         const year = parseInt(yearStr, 10);
         const profile = resolveFacultyProfile(facultyProfilesByYearId, facultyProfilesById, year, fid);
-        const baseFTE = getRankBaseFTE(profile?.rank);
-        const branchName = normalizeBranchName(profile?.branch || '');
+        const baseFTE = getRankBaseFTE(teachingRankByFaculty[facKey] || profile?.rank);
+        const branchNames = getFacultyBranchNames(profile?.branch || '');
         Object.entries(byProgram).forEach(([pKey, load]) => {
             const allocated = (load / totalLoad) * baseFTE;
             fteByProgramKey[pKey] = (fteByProgramKey[pKey] || 0) + allocated;
-            const branchKey = buildProgramBranchDataKey(pKey, branchName);
-            if (branchKey) {
-                programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + allocated;
-            }
+            const observedBranchLoads = facultyProgramBranchLoads[facKey]?.[pKey] || {};
+            const observedLoad = Object.values(observedBranchLoads).reduce((sum, value) => sum + value, 0);
+            const branchWeights = observedLoad > 0
+                ? Object.entries(observedBranchLoads).map(([branch, branchLoad]) => ({
+                    branch,
+                    weight: branchLoad / load
+                }))
+                : branchNames.map(branch => ({ branch, weight: 1 / branchNames.length }));
+            branchWeights.forEach(({ branch: branchName, weight }) => {
+                const branchKey = buildProgramBranchDataKey(pKey, branchName);
+                if (branchKey) {
+                    programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + (allocated * weight);
+                }
+            });
         });
     });
 
@@ -2236,15 +2273,18 @@ async function applyTeachingBasedFacultyFTE(rows) {
             if (!candidateKeys.length) return;
 
             const baseFTE = getRankBaseFTE(profile.rank);
-            const branchName = normalizeBranchName(profile.branch || '');
+            const branchNames = getFacultyBranchNames(profile.branch || '');
             const weights = buildWeights(candidateKeys, studentsByProgramKey);
             weights.forEach(w => {
                 const allocated = w.weight * baseFTE;
                 fteByProgramKey[w.key] = (fteByProgramKey[w.key] || 0) + allocated;
-                const branchKey = buildProgramBranchDataKey(w.key, branchName);
-                if (branchKey) {
-                    programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + allocated;
-                }
+                const branchAllocated = branchNames.length ? allocated / branchNames.length : 0;
+                branchNames.forEach(branchName => {
+                    const branchKey = buildProgramBranchDataKey(w.key, branchName);
+                    if (branchKey) {
+                        programFacultyFteByBranchKey[branchKey] = (programFacultyFteByBranchKey[branchKey] || 0) + branchAllocated;
+                    }
+                });
             });
         });
     });
@@ -4181,7 +4221,7 @@ function exportCompareCSV() {
 }
 
 // ========================================
-// قائمة أعضاء هيئة التدريس لعامي 1446 و1447
+// قائمة أعضاء هيئة التدريس للأعوام 1445-1448
 // ========================================
 async function loadFacultyRoster() {
     try {
@@ -4201,9 +4241,9 @@ async function loadFacultyRoster() {
                 department: normalizeDepartment(pickCell(row, ['department', 'Department'])),
                 nationality: String(pickCell(row, ['nationality', 'Nationality', 'الجنسية']) || '').trim(),
                 gender: String(pickCell(row, ['gender', 'Gender', 'الجنس']) || '').trim(),
-                branch: normalizeBranchName(pickCell(row, ['branch', 'Branch', 'الفرع']))
+                branch: getFacultyBranchNames(pickCell(row, ['branch', 'Branch', 'الفرع'])).join('|')
             }))
-            .filter(row => [1446, 1447].includes(row.year) && row.id && row.name);
+            .filter(row => [1445, 1446, 1447, 1448].includes(row.year) && row.id && row.name);
         return true;
     } catch (error) {
         console.error('خطأ في تحميل قائمة أعضاء هيئة التدريس:', error);
@@ -4223,7 +4263,7 @@ function initFacultyView() {
     const years = [...new Set(facultyRosterData.map(row => row.year).filter(Boolean))].sort((a, b) => a - b);
     const departments = [...new Set(facultyRosterData.map(row => row.department).filter(Boolean))]
         .sort((a, b) => a.localeCompare(b, 'ar'));
-    const branches = getOrderedBranchNames(facultyRosterData.map(row => row.branch));
+    const branches = getOrderedBranchNames(facultyRosterData.flatMap(row => getFacultyBranchNames(row.branch)));
     yearSelect.innerHTML = '<option value="">الكل</option>' +
         years.map(year => `<option value="${year}">${fmtYear(year)}</option>`).join('');
     deptSelect.innerHTML = '<option value="">الكل</option>' +
@@ -4247,7 +4287,7 @@ function getFilteredFacultyRoster() {
     return facultyRosterData.filter(row => {
         if (year && row.year !== year) return false;
         if (department && row.department !== department) return false;
-        if (branch && row.branch !== branch) return false;
+        if (branch && !getFacultyBranchNames(row.branch).includes(branch)) return false;
         if (active && row.active !== active) return false;
         if (!search) return true;
         return row.name.toLowerCase().includes(search) || row.id.includes(search) || row.email.toLowerCase().includes(search);
@@ -4268,26 +4308,31 @@ function renderFacultyRoster() {
         <td>${escapeHTML(row.name)}</td>
         <td>${escapeHTML(row.rank)}</td>
         <td>${escapeHTML(row.department)}</td>
-        <td>${escapeHTML(row.branch || '—')}</td>
+        <td>${escapeHTML(getFacultyBranchNames(row.branch).join('، ') || '—')}</td>
         <td>${escapeHTML(row.gender)}</td>
         <td>${escapeHTML(row.nationality)}</td>
         <td>${escapeHTML(row.email || '—')}</td>
         <td>${row.active === 'نعم' ? 'نشط' : 'غير نشط'}</td>
     </tr>`).join('');
+    if (filtered.length > maxShow) {
+        tbody.innerHTML += `<tr><td colspan="11" style="text-align:center;color:var(--text-light);padding:16px">
+            يتم عرض أول ${maxShow} سجل. استخدم الفلاتر أو صدّر Excel لرؤية الكل.
+        </td></tr>`;
+    }
 }
 
 function exportFacultyExcel() {
     const rows = [
         ['السنة','الرقم الوظيفي','الاسم','الرتبة','القسم','الفرع','الجنس','الجنسية','البريد الإلكتروني','الحالة'],
         ...getFilteredFacultyRoster().map(row => [
-            fmtYear(row.year), row.id, row.name, row.rank, row.department, row.branch,
+            fmtYear(row.year), row.id, row.name, row.rank, row.department, getFacultyBranchNames(row.branch).join('، '),
             row.gender, row.nationality, row.email, row.active === 'نعم' ? 'نشط' : 'غير نشط'
         ])
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'هيئة التدريس');
-    XLSX.writeFile(workbook, 'قائمة-هيئة-التدريس-1446-1447.xlsx');
+    XLSX.writeFile(workbook, 'قائمة-هيئة-التدريس-1445-1448.xlsx');
 }
 
 // ========================================
@@ -5696,7 +5741,13 @@ function getAnalyticsSourceDefinitions() {
             filters: [
                 { id: 'dept', label: 'القسم', getValue: row => row.department },
                 { id: 'rank', label: 'الرتبة', getValue: row => row.rank },
-                { id: 'branch', label: 'الفرع', getValue: row => row.branch },
+                {
+                    id: 'branch',
+                    label: 'الفرع',
+                    getValue: row => getFacultyBranchNames(row.branch).join('، '),
+                    getOptionsValues: row => getFacultyBranchNames(row.branch),
+                    matches: (row, wanted) => getFacultyBranchNames(row.branch).includes(wanted)
+                },
                 { id: 'gender', label: 'الجنس', getValue: row => row.gender },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row.nationality },
                 { id: 'active', label: 'الحالة', getValue: row => row.active === 'نعم' ? 'نشط' : 'غير نشط' },
@@ -5705,7 +5756,14 @@ function getAnalyticsSourceDefinitions() {
                 { id: 'year', label: 'السنة', getValue: row => row.year, format: value => fmtYear(value), sort: 'numeric' },
                 { id: 'dept', label: 'القسم', getValue: row => row.department, format: value => analyticsText(value), sort: 'text' },
                 { id: 'rank', label: 'الرتبة', getValue: row => row.rank, format: value => analyticsText(value), sort: 'text' },
-                { id: 'branch', label: 'الفرع', getValue: row => row.branch, format: value => analyticsText(value), sort: 'text' },
+                {
+                    id: 'branch',
+                    label: 'الفرع',
+                    getValue: row => getFacultyBranchNames(row.branch).join('، '),
+                    getValues: row => getFacultyBranchNames(row.branch),
+                    format: value => analyticsText(value),
+                    sort: 'text'
+                },
                 { id: 'gender', label: 'الجنس', getValue: row => row.gender, format: value => analyticsText(value), sort: 'text' },
                 { id: 'nationality', label: 'الجنسية', getValue: row => row.nationality, format: value => analyticsText(value), sort: 'text' },
             ],
@@ -6044,7 +6102,9 @@ function renderAnalyticsFilters(source) {
     filtersWrap.innerHTML = source.filters.map(field => {
         const rawValues = typeof field.options === 'function'
             ? field.options(sourceRows)
-            : [...new Set(sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean))];
+            : typeof field.getOptionsValues === 'function'
+                ? sourceRows.flatMap(row => field.getOptionsValues(row) || [])
+                : sourceRows.map(row => analyticsText(field.getValue(row), '')).filter(Boolean);
         const values = [...new Set((rawValues || []).filter(Boolean))];
         if (typeof field.options !== 'function') {
             values.sort((a, b) => String(a).localeCompare(String(b), 'ar'));
@@ -6126,7 +6186,10 @@ function getAnalyticsFilteredRows(source) {
                 .map(row => buildProgramDisplayDataFromRow(row, wanted));
             return;
         }
-        rows = rows.filter(row => analyticsText(field.getValue(row), '') === wanted);
+        rows = rows.filter(row => typeof field.matches === 'function'
+            ? field.matches(row, wanted)
+            : analyticsText(field.getValue(row), '') === wanted
+        );
     });
 
     if (search.trim()) {
@@ -6256,17 +6319,31 @@ function runAnalyticsReport() {
 
         const grouped = new Map();
         filteredRows.forEach(row => {
-            const primaryValue = primaryGroup.getValue(row);
-            const secondaryValue = secondaryGroup ? secondaryGroup.getValue(row) : '';
-            const key = `${analyticsText(primaryValue)}||${analyticsText(secondaryValue, '')}`;
-            if (!grouped.has(key)) {
-                grouped.set(key, {
-                    primaryValue,
-                    secondaryValue,
-                    records: []
+            const readGroupValues = group => {
+                if (!group) return [''];
+                const rawValues = typeof group.getValues === 'function'
+                    ? group.getValues(row)
+                    : [group.getValue(row)];
+                const values = (Array.isArray(rawValues) ? rawValues : [rawValues])
+                    .map(value => analyticsText(value, 'غير محدد'))
+                    .filter(Boolean);
+                return values.length ? [...new Set(values)] : ['غير محدد'];
+            };
+            const primaryValues = readGroupValues(primaryGroup);
+            const secondaryValues = secondaryGroup ? readGroupValues(secondaryGroup) : [''];
+            primaryValues.forEach(primaryValue => {
+                secondaryValues.forEach(secondaryValue => {
+                    const key = `${analyticsText(primaryValue)}||${analyticsText(secondaryValue, '')}`;
+                    if (!grouped.has(key)) {
+                        grouped.set(key, {
+                            primaryValue,
+                            secondaryValue,
+                            records: []
+                        });
+                    }
+                    grouped.get(key).records.push(row);
                 });
-            }
-            grouped.get(key).records.push(row);
+            });
         });
 
         reportRows = [...grouped.values()].map(group => ({
