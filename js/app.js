@@ -7,17 +7,18 @@
 // الثوابت
 // ========================================
 const DISPLAY_YEARS = [39, 40, 41, 42, 44, 45, 46, 47];
+const STATISTICAL_TREND_DAMPING = 0.25;
 const CHART_COLORS = [
     '#0d8e8e','#c9a227','#3b82f6','#ef4444','#10b981',
     '#8b5cf6','#ec4899','#f97316','#06b6d4','#6366f1',
     '#22c55e','#eab308','#14b8a6','#e11d48','#7c3aed','#0ea5e9'
 ];
 const KPI_CONFIG = (typeof window !== 'undefined' && window.KPI_CONFIG) ? window.KPI_CONFIG : {};
-const GRADUATES_SURVEY_SHEET_URL = String(KPI_CONFIG.graduatesSurveySheetUrl || '').trim();
-const GRADUATES_SURVEY_BACHELOR_SHEET_URL = String(KPI_CONFIG.graduatesSurveyBachelorSheetUrl || '').trim();
-const GRADUATES_SURVEY_POSTGRAD_SHEET_URL = String(KPI_CONFIG.graduatesSurveyPostgradSheetUrl || '').trim();
 const SHARI3AH_SURVEYS_DATA_URL = String(
     KPI_CONFIG.shari3ahSurveysDataUrl || 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/surveys-data.js'
+).trim();
+const SHARI3AH_COURSE_EVALUATIONS_DATA_URL = String(
+    KPI_CONFIG.shari3ahCourseEvaluationsDataUrl || 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/course-evaluations-data.js'
 ).trim();
 const ACTIVITIES_RAW_BASE = 'https://raw.githubusercontent.com/majed354/faculty-activities/main/data';
 const ALL_BRANCH_FILTER_VALUE = '__all__';
@@ -46,7 +47,10 @@ const SHARI3AH_SURVEYS_PROGRAM_ID_MAP = {
     'الدراسات القرآنية|دكتوراه': 'p14',
     'القراءات|دكتوراه': 'p15',
 };
-const SHARI3AH_PROGRAM_EVAL_SURVEY_TITLE = 'استبانة تقويم برنامج';
+const SHARI3AH_PROGRAM_EVAL_SURVEY_TITLES = new Set([
+    'استبانة تقويم برنامج',
+    'استطلاع الخبرة التعليمية في البرنامج',
+]);
 const INDICATORS_UG = [
     { id:1,  code:'KPI-1',  name:"تقويم الطلاب لجودة خبرات التعلم في البرنامج", unit:"درجة", key:"experience_eval", numeric:true },
     { id:2,  code:'KPI-2',  name:"تقييم الطلاب لجودة المقررات", unit:"درجة", key:"course_eval", numeric:true },
@@ -77,17 +81,6 @@ const INDICATORS_PG = [
     { id:12, code:'KPI-PG-12', name:"نسبة النشر العلمي للطلاب", unit:"%", key:"student_publication", numeric:true },
     { id:13, code:'KPI-PG-13', name:"عدد براءات الاختراع والابتكار وجوائز التميز", unit:"براءة", key:"patents", numeric:true },
 ];
-const BACHELOR_DEGREES = new Set(['بكالوريوس']);
-const POSTGRAD_DEGREES = new Set(['الماجستير', 'دكتوراه']);
-const SURVEY_DEPT_FALLBACK_RULES = {
-    // قواعد الأعمال المعتمدة:
-    // - الشريعة والقراءات: تعدد برامج داخل نفس الدرجة => منع التعويض على مستوى القسم.
-    // - الأنظمة والدراسات الإسلامية (الثقافة الإسلامية): برنامج واحد لكل درجة => يسمح بالتعويض عند غياب اسم البرنامج.
-    'الشريعة': 'disabled',
-    'القراءات': 'disabled',
-    'الأنظمة': 'single_program_per_degree',
-    'الدراسات الإسلامية': 'single_program_per_degree',
-};
 const GRADUATE_SAMPLE_METRICS_BY_DEGREE = {
     // استبانة الخريجين مصدر تكميلي لمؤشرات لا تغطيها الاستطلاعات الأصلية الحالية.
     'بكالوريوس': new Set(['performance_rate', 'employment_rate', 'eval_employers']),
@@ -137,7 +130,11 @@ let allRows = [];      // raw rows from CSV
 let programs = [];     // organized {name, degree, dept, years:{y: data}}
 let charts = {};       // Chart instances
 let currentProg = null;// for export
-let compareThirdEnabled = false;
+const COMPARE_SLOT_KEYS = ['a','b','c','d','e','f','g','h','i','j'];
+const COMPARE_SLOT_LABELS = ['الأولى','الثانية','الثالثة','الرابعة','الخامسة','السادسة','السابعة','الثامنة','التاسعة','العاشرة'];
+const MIN_COMPARE_SLOTS = 2;
+const MAX_COMPARE_SLOTS = COMPARE_SLOT_KEYS.length;
+let compareSlotCount = MIN_COMPARE_SLOTS;
 let gradData = [];     // graduate records
 let facultyRosterData = []; // faculty roster for 1445 through 1448
 let entrantData = [];  // accepted new-entrant records for Islamic Studies branches
@@ -301,12 +298,6 @@ function getIslamicBranchCoverage(branch, year = null) {
         if (coverage) return coverage;
     }
     return null;
-}
-
-function isDeptSurveyFallbackAllowed(dept) {
-    const normalizedDept = normalizeDepartment(dept);
-    const rule = SURVEY_DEPT_FALLBACK_RULES[normalizedDept] || 'disabled';
-    return rule === 'single_program_per_degree';
 }
 
 function normalizeRank(rank) {
@@ -606,15 +597,6 @@ function normalizeSurveyProgramName(name) {
         .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
-}
-
-function detectSurveyDegree(programName, allowedDegrees = null) {
-    const raw = normalizeArabicText(programName);
-    if (/دكتوراه/.test(raw)) return 'دكتوراه';
-    if (/ماجستير/.test(raw)) return 'الماجستير';
-    if (/بكالوريوس/.test(raw)) return 'بكالوريوس';
-    if (allowedDegrees && allowedDegrees.size === 1) return [...allowedDegrees][0];
-    return '';
 }
 
 function buildProgramMajorDegreeKey(programName, degreeName) {
@@ -1083,266 +1065,6 @@ async function applyAverageGraduationDurationFromDetails(rows) {
     };
 }
 
-function extractNumericValues(value) {
-    if (value == null) return [];
-    const normalized = normalizeArabicText(value)
-        .replace(/[٫،]/g, '.')
-        .replace(/[–—]/g, '-');
-    const matches = normalized.match(/\d+(?:\.\d+)?/g);
-    if (!matches) return [];
-    return matches.map(n => parseFloat(n)).filter(Number.isFinite);
-}
-
-function clampValue(value, min, max) {
-    if (!Number.isFinite(value)) return null;
-    return Math.min(max, Math.max(min, value));
-}
-
-function parseRangeOrSingleValue(value, min, max) {
-    const raw = normalizeArabicText(value);
-    if (!raw) return null;
-    const nums = extractNumericValues(raw);
-    if (!nums.length) return null;
-
-    let parsed = nums[0];
-    const hasRange = /-\s*\d/.test(raw);
-    if (hasRange && nums.length >= 2) parsed = (nums[0] + nums[1]) / 2;
-
-    if (/^(?:أقل|اقل)\s*من/.test(raw)) parsed = nums[0] - 0.25;
-    if (/^(?:أعلى|اعلى|أكثر)\s*من/.test(raw)) parsed = nums[0] + 0.25;
-
-    return clampValue(parsed, min, max);
-}
-
-function parseSurveyYear(value) {
-    const nums = extractNumericValues(value).map(n => Math.round(n));
-    if (!nums.length) return null;
-    const fullYear = nums.find(n => n >= 1400);
-    if (fullYear) return fullYear % 100;
-    const candidate = nums[nums.length - 1];
-    if (!candidate) return null;
-    return candidate >= 100 ? candidate % 100 : candidate;
-}
-
-function parseSurveyEmploymentStatus(value) {
-    const raw = normalizeArabicText(value);
-    if (!raw) return null;
-
-    const positive = [
-        'موظف', 'يعمل', 'أعمل', 'اعمل', 'عمل حر', 'رائد أعمال', 'صاحب عمل',
-        'أكمل دراسات عليا', 'اكمل دراسات عليا', 'مكمل دراسات عليا', 'دراسات عليا'
-    ];
-    const negative = ['أبحث عن عمل', 'ابحث عن عمل', 'باحث عن عمل', 'عاطل', 'لا أعمل', 'غير موظف'];
-
-    if (positive.some(x => raw.includes(x))) return true;
-    if (negative.some(x => raw.includes(x))) return false;
-    return null;
-}
-
-function normalizeHeaderKey(header) {
-    return normalizeArabicText(header).toLowerCase();
-}
-
-function findHeaderByAllParts(headers, parts) {
-    const normalizedParts = parts.map(p => normalizeHeaderKey(p));
-    const match = headers.find(h => {
-        const key = normalizeHeaderKey(h);
-        return normalizedParts.every(part => key.includes(part));
-    });
-    return match || '';
-}
-
-function findHeaderByCandidates(headers, candidates) {
-    for (const parts of candidates) {
-        const hit = findHeaderByAllParts(headers, parts);
-        if (hit) return hit;
-    }
-    return '';
-}
-
-function detectGraduateSurveyColumns(headers) {
-    return {
-        program: findHeaderByCandidates(headers, [
-            ['اسم البرنامج'],
-            ['البرنامج الأكاديمي'],
-            ['البرنامج']
-        ]),
-        year: findHeaderByCandidates(headers, [
-            ['سنة التخرج'],
-            ['سنه التخرج'],
-            ['التخرج من البرنامج']
-        ]),
-        courseEval: findHeaderByCandidates(headers, [
-            ['جودة المقررات'],
-            ['تقييم المقررات']
-        ]),
-        experience: findHeaderByCandidates(headers, [
-            ['تقييمك العام', 'جودة التعلم'],
-            ['جودة خبرات التعلم']
-        ]),
-        supervision: findHeaderByCandidates(headers, [
-            ['جودة الإشراف'],
-            ['الاشراف', 'الرسالة'],
-            ['الإشراف العلمي']
-        ]),
-        services: findHeaderByCandidates(headers, [
-            ['رضاك', 'الخدمات المقدمة'],
-            ['رضا الطلاب', 'الخدمات'],
-            ['مستوى الخدمات']
-        ]),
-        status: findHeaderByCandidates(headers, [
-            ['وضعك الحالي بعد التخرج'],
-            ['وضعك الحالي']
-        ]),
-        performance: findHeaderByCandidates(headers, [
-            ['درجتك', 'الاختبارات الوطنية'],
-            ['الاختبارات', 'مهنية']
-        ]),
-        employerEval: findHeaderByCandidates(headers, [
-            ['تقييم رئيسك'],
-            ['تقيّم نفسك'],
-            ['التقييم من ٥'],
-            ['التقييم من 5']
-        ]),
-    };
-}
-
-function resolveGraduateSurveyCsvUrl(url) {
-    const raw = String(url || '').trim();
-    if (!raw) return '';
-    if (raw.includes('output=csv') || raw.includes('format=csv')) return raw;
-
-    try {
-        const parsed = new URL(raw);
-        const match = parsed.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-        if (!match) return raw;
-        const gidFromHash = parsed.hash.match(/gid=(\d+)/);
-        const gid = parsed.searchParams.get('gid') || (gidFromHash ? gidFromHash[1] : '');
-        return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv${gid ? `&gid=${gid}` : ''}`;
-    } catch {
-        return raw;
-    }
-}
-
-function aggregateGraduateSurveyRows(surveyRows, allowedDegrees = null) {
-    if (!surveyRows.length) return { metricsByKey: {}, groups: 0, matchedRows: 0, reason: 'empty' };
-
-    const headers = Object.keys(surveyRows[0]);
-    const columns = detectGraduateSurveyColumns(headers);
-    if (!columns.program || !columns.year) {
-        return { metricsByKey: {}, groups: 0, matchedRows: 0, reason: 'missing-required-columns' };
-    }
-
-    const grouped = {};
-    let matchedRows = 0;
-    surveyRows.forEach(row => {
-        const program = normalizeSurveyProgramName(row[columns.program]);
-        const degree = detectSurveyDegree(row[columns.program], allowedDegrees);
-        const year = parseSurveyYear(row[columns.year]);
-        if (!program || !year) return;
-
-        const key = `${year}|${program}|${degree || '*'}`;
-        if (!grouped[key]) {
-            grouped[key] = {
-                responses: 0,
-                courseSum: 0, courseCount: 0,
-                experienceSum: 0, experienceCount: 0,
-                supervisionSum: 0, supervisionCount: 0,
-                servicesSum: 0, servicesCount: 0,
-                perfSum: 0, perfCount: 0,
-                employedCount: 0, employmentCount: 0,
-                employerEvalSum: 0, employerEvalCount: 0
-            };
-        }
-        const g = grouped[key];
-        g.responses++;
-        matchedRows++;
-
-        const courseEval = parseRangeOrSingleValue(row[columns.courseEval], 1, 5);
-        if (courseEval != null) {
-            g.courseSum += courseEval;
-            g.courseCount++;
-        }
-
-        const experience = parseRangeOrSingleValue(row[columns.experience], 1, 5);
-        if (experience != null) {
-            g.experienceSum += experience;
-            g.experienceCount++;
-        }
-
-        const supervisionEval = parseRangeOrSingleValue(row[columns.supervision], 1, 5);
-        if (supervisionEval != null) {
-            g.supervisionSum += supervisionEval;
-            g.supervisionCount++;
-        }
-
-        const servicesEval = parseRangeOrSingleValue(row[columns.services], 1, 5);
-        if (servicesEval != null) {
-            g.servicesSum += servicesEval;
-            g.servicesCount++;
-        }
-
-        const performance = parseRangeOrSingleValue(row[columns.performance], 0, 100);
-        if (performance != null) {
-            g.perfSum += performance;
-            g.perfCount++;
-        }
-
-        const employmentStatus = parseSurveyEmploymentStatus(row[columns.status]);
-        if (employmentStatus != null) {
-            g.employmentCount++;
-            if (employmentStatus) g.employedCount++;
-        }
-
-        const employerEval = parseRangeOrSingleValue(row[columns.employerEval], 1, 5);
-        if (employerEval != null) {
-            g.employerEvalSum += employerEval;
-            g.employerEvalCount++;
-        }
-    });
-
-    const metricsByKey = {};
-    Object.entries(grouped).forEach(([key, g]) => {
-        metricsByKey[key] = {
-            eval_courses: g.courseCount > 0
-                ? Math.round((g.courseSum / g.courseCount) * 100) / 100 : null,
-            eval_courses_sample: g.courseCount,
-            eval_experience: g.experienceCount > 0
-                ? Math.round((g.experienceSum / g.experienceCount) * 100) / 100 : null,
-            eval_experience_sample: g.experienceCount,
-            eval_supervision: g.supervisionCount > 0
-                ? Math.round((g.supervisionSum / g.supervisionCount) * 100) / 100 : null,
-            eval_supervision_sample: g.supervisionCount,
-            eval_services: g.servicesCount > 0
-                ? Math.round((g.servicesSum / g.servicesCount) * 100) / 100 : null,
-            eval_services_sample: g.servicesCount,
-            performance_rate: g.perfCount > 0
-                ? Math.round((g.perfSum / g.perfCount) * 10) / 10 : null,
-            performance_rate_sample: g.perfCount,
-            employment_rate: g.employmentCount > 0
-                ? pct(g.employedCount, g.employmentCount) : null,
-            employment_employed_count: g.employedCount,
-            employment_rate_sample: g.employmentCount,
-            eval_employers: g.employerEvalCount > 0
-                ? Math.round((g.employerEvalSum / g.employerEvalCount) * 100) / 100 : null,
-            eval_employers_sample: g.employerEvalCount,
-        };
-    });
-
-    return {
-        metricsByKey,
-        groups: Object.keys(metricsByKey).length,
-        matchedRows,
-        reason: Object.keys(metricsByKey).length ? '' : 'no-metrics'
-    };
-}
-
-function isDegreeAllowed(row, allowedDegrees) {
-    if (!allowedDegrees || !allowedDegrees.size) return true;
-    const degree = normalizeDegree(row.Degree_aName);
-    return allowedDegrees.has(degree);
-}
-
 function isMetricMissing(value) {
     return value == null || String(value).trim() === '';
 }
@@ -1352,94 +1074,10 @@ function getGraduateSampleMetricKeys(degreeName) {
     return GRADUATE_SAMPLE_METRICS_BY_DEGREE[degree] || new Set();
 }
 
-function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, sourceLabel = '') {
-    let appliedRows = 0;
-    const matchedGroups = new Set();
-    const deptDegreeProgramCounts = {};
-
-    rows.forEach(row => {
-        if (!isDegreeAllowed(row, allowedDegrees)) return;
-        const year = parseInt(row.Semester, 10);
-        const degree = normalizeDegree(row.Degree_aName);
-        const dept = normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName));
-        if (!year || !degree || !dept) return;
-        const key = `${year}|${dept}|${degree}`;
-        deptDegreeProgramCounts[key] = (deptDegreeProgramCounts[key] || 0) + 1;
-    });
-
-    rows.forEach(row => {
-        if (!isDegreeAllowed(row, allowedDegrees)) return;
-
-        const year = parseInt(row.Semester, 10);
-        const degree = normalizeDegree(row.Degree_aName);
-        const normalizedMajor = normalizeSurveyProgramName(row.Major_aName);
-        const majorKey = `${year}|${normalizedMajor}|${degree}`;
-        const legacyMajorKey = `${year}|${normalizedMajor}|*`;
-        const normalizedDept = normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName));
-        const deptKey = `${year}|${normalizedDept}|${degree}`;
-        const legacyDeptKey = `${year}|${normalizedDept}|*`;
-        const deptDegreeKey = `${year}|${normalizedDept}|${degree}`;
-
-        const matchedProgramKey = metricsByKey[majorKey] ? majorKey : (metricsByKey[legacyMajorKey] ? legacyMajorKey : '');
-        const matchedDeptKey = metricsByKey[deptKey] ? deptKey : (metricsByKey[legacyDeptKey] ? legacyDeptKey : '');
-        const hasProgramMetrics = Boolean(matchedProgramKey);
-        const deptFallbackEnabled = isDeptSurveyFallbackAllowed(normalizedDept);
-        const canUseDeptFallback = !hasProgramMetrics
-            && deptFallbackEnabled
-            && Boolean(matchedDeptKey)
-            && deptDegreeProgramCounts[deptDegreeKey] === 1;
-        const metrics = hasProgramMetrics
-            ? metricsByKey[matchedProgramKey]
-            : (canUseDeptFallback ? metricsByKey[matchedDeptKey] : null);
-        if (!metrics) return;
-
-        const eligibleMetrics = getGraduateSampleMetricKeys(degree);
-        const usedProgramMetrics = hasProgramMetrics;
-        const scope = usedProgramMetrics ? 'program' : 'dept';
-        const sampleSource = `graduates_sample_${scope}${sourceLabel ? `_${sourceLabel}` : ''}`;
-        let touched = false;
-        if (eligibleMetrics.has('eval_supervision') && isMetricMissing(row.eval_supervision) && metrics.eval_supervision != null) {
-            row.eval_supervision = metrics.eval_supervision;
-            row.eval_supervision_sample = metrics.eval_supervision_sample || 0;
-            row.eval_supervision_source = sampleSource;
-            touched = true;
-        }
-        if (eligibleMetrics.has('eval_services') && isMetricMissing(row.eval_services) && metrics.eval_services != null) {
-            row.eval_services = metrics.eval_services;
-            row.eval_services_sample = metrics.eval_services_sample || 0;
-            row.eval_services_source = sampleSource;
-            touched = true;
-        }
-        if (eligibleMetrics.has('performance_rate') && isMetricMissing(row.performance_rate) && metrics.performance_rate != null) {
-            row.performance_rate = metrics.performance_rate;
-            row.performance_rate_sample = metrics.performance_rate_sample || 0;
-            row.performance_rate_source = sampleSource;
-            touched = true;
-        }
-        if (eligibleMetrics.has('employment_rate') && isMetricMissing(row.employment_rate) && metrics.employment_rate != null) {
-            row.employment_rate = metrics.employment_rate;
-            row.employment_employed_count = metrics.employment_employed_count || 0;
-            row.employment_rate_sample = metrics.employment_rate_sample || 0;
-            row.employment_rate_source = sampleSource;
-            touched = true;
-        }
-        if (eligibleMetrics.has('eval_employers') && isMetricMissing(row.eval_employers) && metrics.eval_employers != null) {
-            row.eval_employers = metrics.eval_employers;
-            row.eval_employers_sample = metrics.eval_employers_sample || 0;
-            row.eval_employers_source = sampleSource;
-            touched = true;
-        }
-        if (touched) {
-            row.survey_source = sampleSource;
-            matchedGroups.add(usedProgramMetrics ? matchedProgramKey : matchedDeptKey);
-            appliedRows++;
-        }
-    });
-    return { appliedRows, matchedGroups: matchedGroups.size };
-}
-
 function isShari3ahProgramEvaluationSurvey(title) {
-    return normalizeArabicText(title) === normalizeArabicText(SHARI3AH_PROGRAM_EVAL_SURVEY_TITLE);
+    const normalizedTitle = normalizeArabicText(title);
+    return [...SHARI3AH_PROGRAM_EVAL_SURVEY_TITLES]
+        .some(candidate => normalizedTitle === normalizeArabicText(candidate));
 }
 
 function aggregateProgramExperienceMetricFromSurvey(survey) {
@@ -1461,11 +1099,20 @@ function aggregateProgramExperienceMetricFromSurvey(survey) {
             (item.genders || []).forEach(genderEntry => {
                 const responses = Number(genderEntry.responses || 0);
                 const weightedTotal = Number(genderEntry.scoreTotal || 0);
-                if (!Number.isFinite(responses) || responses <= 0) return;
+                if (Number.isFinite(responses) && responses > 0) {
+                    itemResponses += responses;
+                    responseTotal += responses;
+                    scoreTotal += Number.isFinite(weightedTotal) ? weightedTotal : 0;
+                    return;
+                }
 
-                itemResponses += responses;
-                responseTotal += responses;
-                scoreTotal += Number.isFinite(weightedTotal) ? weightedTotal : 0;
+                // ملفات 1447 تحفظ المتوسطات الجاهزة وعدد القياسات بدل مجموع الدرجات والاستجابات.
+                const average = Number(genderEntry.average);
+                const measurementCount = Number(genderEntry.measurementCount || 0);
+                if (!Number.isFinite(average) || !Number.isFinite(measurementCount) || measurementCount <= 0) return;
+                itemResponses += measurementCount;
+                responseTotal += measurementCount;
+                scoreTotal += average * measurementCount;
             });
 
             if (itemResponses > 0) {
@@ -1498,14 +1145,18 @@ function extractProgramExperienceMetricsFromShari3ahSurveys(payload) {
     return metricsByDatasetKey;
 }
 
-async function applyProgramExperienceFromShari3ahSurveys(rows) {
-    if (!SHARI3AH_SURVEYS_DATA_URL) return { applied: false, reason: 'no-url' };
+async function fetchShari3ahSurveysPayload() {
+    if (!SHARI3AH_SURVEYS_DATA_URL) return null;
 
     const requestUrl = `${SHARI3AH_SURVEYS_DATA_URL}${SHARI3AH_SURVEYS_DATA_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
     const sourceText = await fetchTextIfExists(requestUrl);
-    if (!sourceText) return { applied: false, reason: 'unreachable-source' };
+    if (!sourceText) return null;
 
     const payload = parseWindowAssignedJSON(sourceText, 'SURVEYS_DATA');
+    return payload && payload.extractedData ? payload : null;
+}
+
+function applyProgramExperienceFromShari3ahSurveys(rows, payload) {
     if (!payload || !payload.extractedData) return { applied: false, reason: 'invalid-payload' };
 
     const metricsByDatasetKey = extractProgramExperienceMetricsFromShari3ahSurveys(payload);
@@ -1539,80 +1190,165 @@ async function applyProgramExperienceFromShari3ahSurveys(rows) {
     };
 }
 
-async function applyGraduateSurveyIndicatorsFromSheet(rows, rawUrl, allowedDegrees = null, sourceLabel = '') {
-    const csvUrl = resolveGraduateSurveyCsvUrl(rawUrl);
-    if (!csvUrl) return { applied: false, reason: 'no-url' };
-
-    const requestUrl = `${csvUrl}${csvUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-    const csvText = await fetchTextIfExists(requestUrl);
-    if (!csvText) return { applied: false, reason: 'unreachable-sheet' };
-
-    const surveyRows = parseCSVQuotedObjects(csvText, ',');
-    if (!surveyRows.length) return { applied: false, reason: 'empty-sheet' };
-
-    const surveyAgg = aggregateGraduateSurveyRows(surveyRows, allowedDegrees);
-    if (!Object.keys(surveyAgg.metricsByKey).length) {
-        return { applied: false, reason: surveyAgg.reason || 'no-metrics', surveyRows: surveyRows.length };
+function applyGraduateSamplesFromShari3ahSurveys(rows, payload) {
+    const graduateSamples = payload?.graduateSampleKpis;
+    if (!graduateSamples || typeof graduateSamples !== 'object') {
+        return { applied: false, reason: 'no-graduate-sample-kpis' };
     }
 
-    const applyInfo = applyGraduateSurveyMetrics(rows, surveyAgg.metricsByKey, allowedDegrees, sourceLabel);
+    let appliedRows = 0;
+    let appliedMetrics = 0;
+    const matchedDatasets = new Set();
+    const source = 'graduates_sample_program_shari3ah_surveys';
+    const fieldMap = {
+        eval_supervision: ['eval_supervision', 'eval_supervision_sample', 'eval_supervision_source'],
+        eval_services: ['eval_services', 'eval_services_sample', 'eval_services_source'],
+        performance_rate: ['performance_rate', 'performance_rate_sample', 'performance_rate_source'],
+        employment_rate: ['employment_rate', 'employment_rate_sample', 'employment_rate_source'],
+        eval_employers: ['eval_employers', 'eval_employers_sample', 'eval_employers_source'],
+    };
+
+    rows.forEach(row => {
+        const programId = getShari3ahSurveysProgramId(row.Major_aName, row.Degree_aName);
+        if (!programId) return;
+
+        const datasetKey = `${programId}::${fmtYear(row.Semester)}`;
+        const sampleEntry = graduateSamples[datasetKey];
+        if (!sampleEntry || !sampleEntry.metrics) return;
+
+        const eligibleMetrics = getGraduateSampleMetricKeys(row.Degree_aName);
+        let touched = false;
+        Object.entries(fieldMap).forEach(([metricKey, [valueField, sampleField, sourceField]]) => {
+            if (!eligibleMetrics.has(metricKey) || !isMetricMissing(row[valueField])) return;
+            const metric = sampleEntry.metrics[metricKey];
+            const value = Number(metric?.value);
+            if (!Number.isFinite(value)) return;
+
+            row[valueField] = value;
+            row[sampleField] = Math.max(0, Number(metric.sampleCount) || 0);
+            row[sourceField] = source;
+            if (metricKey === 'employment_rate') {
+                row.employment_employed_count = Math.max(0, Number(metric.positiveCount) || 0);
+            }
+            touched = true;
+            appliedMetrics++;
+        });
+
+        if (touched) {
+            row.survey_source = source;
+            matchedDatasets.add(datasetKey);
+            appliedRows++;
+        }
+    });
+
     return {
-        applied: applyInfo.appliedRows > 0,
-        appliedRows: applyInfo.appliedRows,
-        groups: surveyAgg.groups,
-        matchedRows: surveyAgg.matchedRows,
-        reason: applyInfo.appliedRows > 0 ? '' : 'no-target-rows'
+        applied: appliedRows > 0,
+        appliedRows,
+        appliedMetrics,
+        matchedDatasets: matchedDatasets.size,
+        availableDatasets: Object.keys(graduateSamples).length,
+        reason: appliedRows > 0 ? '' : 'no-target-rows',
     };
 }
 
-async function applyGraduateSurveyIndicators(rows) {
-    const hasSplitConfig = Boolean(
-        GRADUATES_SURVEY_BACHELOR_SHEET_URL || GRADUATES_SURVEY_POSTGRAD_SHEET_URL
-    );
-    const sources = hasSplitConfig ? [
-        {
-            url: GRADUATES_SURVEY_BACHELOR_SHEET_URL,
-            degrees: BACHELOR_DEGREES,
-            label: 'bachelor'
-        },
-        {
-            url: GRADUATES_SURVEY_POSTGRAD_SHEET_URL,
-            degrees: POSTGRAD_DEGREES,
-            label: 'postgrad'
-        }
-    ] : [
-        {
-            url: GRADUATES_SURVEY_SHEET_URL,
-            degrees: null,
-            label: 'all'
-        }
-    ];
+function extractCourseEvaluationMetricsFromShari3ahSurveys(payload) {
+    const courseRecords = Array.isArray(payload?.courseRecords) ? payload.courseRecords : [];
+    const aggregates = {};
+    const supervisionCourseNames = new Set(['مشروع بحثي', 'الرسالة']);
 
-    const configuredSources = sources.filter(s => String(s.url || '').trim() !== '');
-    if (!configuredSources.length) return { applied: false, reason: 'no-url' };
+    courseRecords.forEach(record => {
+        const year = parseInt(normalizeArabicDigits(record.year), 10);
+        const program = normalizeSurveyProgramName(record.program);
+        const degree = normalizeDegree(record.degree);
+        const score = Number(record.score);
+        const respondents = Number(record.respondents || 0);
+        if (!year || !program || !degree || !Number.isFinite(score)) return;
 
+        const key = `${year}|${program}|${degree}`;
+        if (!aggregates[key]) {
+            aggregates[key] = {
+                scoreTotal: 0,
+                courseCount: 0,
+                respondents: 0,
+                supervisionScoreTotal: 0,
+                supervisionCourseCount: 0,
+                supervisionRespondents: 0,
+            };
+        }
+        const aggregate = aggregates[key];
+        aggregate.scoreTotal += score;
+        aggregate.courseCount++;
+        if (Number.isFinite(respondents) && respondents > 0) {
+            aggregate.respondents += respondents;
+        }
+
+        const courseName = normalizeArabicText(record.courseName).replace(/[()]/g, '').trim();
+        if (supervisionCourseNames.has(courseName)) {
+            aggregate.supervisionScoreTotal += score;
+            aggregate.supervisionCourseCount++;
+            if (Number.isFinite(respondents) && respondents > 0) {
+                aggregate.supervisionRespondents += respondents;
+            }
+        }
+    });
+
+    return Object.fromEntries(Object.entries(aggregates).map(([key, aggregate]) => [key, {
+        eval_courses: Math.round((aggregate.scoreTotal / aggregate.courseCount) * 100) / 100,
+        eval_courses_sample: aggregate.respondents,
+        course_count: aggregate.courseCount,
+        eval_supervision: aggregate.supervisionCourseCount > 0
+            ? Math.round((aggregate.supervisionScoreTotal / aggregate.supervisionCourseCount) * 100) / 100
+            : null,
+        eval_supervision_sample: aggregate.supervisionRespondents,
+        supervision_course_count: aggregate.supervisionCourseCount,
+    }]));
+}
+
+async function applyCourseEvaluationsFromShari3ahSurveys(rows) {
+    if (!SHARI3AH_COURSE_EVALUATIONS_DATA_URL) return { applied: false, reason: 'no-url' };
+
+    const requestUrl = `${SHARI3AH_COURSE_EVALUATIONS_DATA_URL}${SHARI3AH_COURSE_EVALUATIONS_DATA_URL.includes('?') ? '&' : '?'}t=${Date.now()}`;
+    const sourceText = await fetchTextIfExists(requestUrl);
+    if (!sourceText) return { applied: false, reason: 'unreachable-source' };
+
+    const payload = parseWindowAssignedJSON(sourceText, 'COURSE_EVALUATIONS_DATA');
+    if (!payload || !Array.isArray(payload.courseRecords)) {
+        return { applied: false, reason: 'invalid-payload' };
+    }
+
+    const metricsByProgramYear = extractCourseEvaluationMetricsFromShari3ahSurveys(payload);
     let appliedRows = 0;
-    let groups = 0;
-    let matchedRows = 0;
-    let sourcesUsed = 0;
-    let failures = 0;
+    const matchedGroups = new Set();
 
-    for (const source of configuredSources) {
-        const info = await applyGraduateSurveyIndicatorsFromSheet(rows, source.url, source.degrees, source.label);
-        if (info.applied) {
-            appliedRows += info.appliedRows || 0;
-            groups += info.groups || 0;
-            matchedRows += info.matchedRows || 0;
-            sourcesUsed++;
-        } else {
-            failures++;
+    rows.forEach(row => {
+        const year = absYearFromSemester(row.Semester);
+        const program = normalizeSurveyProgramName(row.Major_aName);
+        const degree = normalizeDegree(row.Degree_aName);
+        const key = `${year}|${program}|${degree}`;
+        const metric = metricsByProgramYear[key];
+        if (!metric) return;
+
+        row.eval_courses = metric.eval_courses;
+        row.eval_courses_sample = metric.eval_courses_sample;
+        row.eval_courses_course_count = metric.course_count;
+        row.eval_courses_source = 'shari3ah_surveys_course_evaluations';
+        if (degree !== 'بكالوريوس' && Number.isFinite(metric.eval_supervision)) {
+            row.eval_supervision = metric.eval_supervision;
+            row.eval_supervision_sample = metric.eval_supervision_sample;
+            row.eval_supervision_course_count = metric.supervision_course_count;
+            row.eval_supervision_source = 'shari3ah_surveys_course_supervision';
         }
-    }
+        matchedGroups.add(key);
+        appliedRows++;
+    });
 
-    if (!appliedRows) {
-        return { applied: false, reason: failures ? 'all-sources-failed' : 'no-metrics' };
-    }
-    return { applied: true, appliedRows, groups, matchedRows, sourcesUsed };
+    return {
+        applied: appliedRows > 0,
+        appliedRows,
+        matchedGroups: matchedGroups.size,
+        availableGroups: Object.keys(metricsByProgramYear).length,
+        sourceModified: payload.meta?.sourceModified || '',
+    };
 }
 
 function parseCitationValue(value, citationsMap = null) {
@@ -2401,21 +2137,28 @@ async function loadData() {
         const csv = await res.text();
         allRows = parseCSV(csv);
         const branchInfo = await loadIslamicBranchData();
-        const durationInfo = await applyAverageGraduationDurationFromDetails(allRows);
-        const experienceInfo = await applyProgramExperienceFromShari3ahSurveys(allRows);
-        const surveyInfo = await applyGraduateSurveyIndicators(allRows);
-        const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
+        const [durationInfo, shari3ahSurveyPayload, courseSurveyInfo, researchInfo] = await Promise.all([
+            applyAverageGraduationDurationFromDetails(allRows),
+            fetchShari3ahSurveysPayload(),
+            applyCourseEvaluationsFromShari3ahSurveys(allRows),
+            applyResearchIndicatorsFromActivities(allRows),
+        ]);
+        const experienceInfo = applyProgramExperienceFromShari3ahSurveys(allRows, shari3ahSurveyPayload);
+        const surveyInfo = applyGraduateSamplesFromShari3ahSurveys(allRows, shari3ahSurveyPayload);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
+        const statisticalEstimateInfo = applyStatisticalKpiEstimates(programs);
         console.info('KPI data loaded', {
             programs: programs.length,
             rows: allRows.length,
             durationInfo,
             surveyInfo,
             experienceInfo,
+            courseSurveyInfo,
             researchInfo,
             fteInfo,
             branchInfo,
+            statisticalEstimateInfo,
         });
         return true;
     } catch (e) {
@@ -2498,7 +2241,7 @@ function getAvailableYears() {
 // ========================================
 // حساب المؤشرات
 // ========================================
-function calcKPIs(d, degree) {
+function calcKPIs(d, degree, includeStatistical = true) {
     const kpi = {};
     kpi.experience_eval = d.eval_experience ?? null;
     kpi.course_eval = d.eval_courses ?? null;
@@ -2548,7 +2291,171 @@ function calcKPIs(d, degree) {
     kpi.student_publication = null;
     kpi.patents = null;
 
+    if (includeStatistical && d.statistical_estimates) {
+        Object.entries(d.statistical_estimates).forEach(([key, estimate]) => {
+            if (kpi[key] == null && estimate?.displayValue != null) {
+                kpi[key] = estimate.displayValue;
+            }
+        });
+    }
+
     return kpi;
+}
+
+function statisticalNumericValue(value, indicator) {
+    if (value == null) return null;
+    if (indicator.key === 'student_faculty_ratio') {
+        const match = String(value).match(/^1:([0-9.]+)$/);
+        return match ? Number(match[1]) : null;
+    }
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeStatisticalEstimate(value, indicator) {
+    let normalized = Number(value);
+    if (!Number.isFinite(normalized)) return null;
+    if (indicator.unit === 'درجة') normalized = Math.min(5, Math.max(1, normalized));
+    else if (indicator.unit === '%') normalized = Math.min(100, Math.max(0, normalized));
+    else normalized = Math.max(0, normalized);
+
+    if (indicator.key === 'student_faculty_ratio') {
+        normalized = Math.round(normalized * 10) / 10;
+        return { numericValue: normalized, displayValue: `1:${normalized.toFixed(1)}` };
+    }
+    if (indicator.unit === 'براءة') {
+        normalized = Math.round(normalized);
+    } else if (indicator.unit === '%') {
+        normalized = Math.round(normalized * 10) / 10;
+    } else {
+        normalized = Math.round(normalized * 100) / 100;
+    }
+    return { numericValue: normalized, displayValue: normalized };
+}
+
+function getActualIndicatorValue(program, year, indicator) {
+    const data = program?.years?.[year];
+    if (!data) return null;
+    const kpi = calcKPIs(data, program.degree, false);
+    return statisticalNumericValue(kpi[indicator.key], indicator);
+}
+
+function buildStatisticalEstimate(programList, program, targetYear, indicator) {
+    const priorYears = Object.keys(program.years)
+        .map(Number)
+        .filter(year => year < targetYear)
+        .sort((a, b) => b - a);
+    const history = priorYears
+        .map(year => ({ year, value: getActualIndicatorValue(program, year, indicator) }))
+        .filter(item => Number.isFinite(item.value));
+
+    let estimateValue;
+    let method;
+    let basisYears = [];
+    let basisValues = [];
+
+    if (history.length >= 2) {
+        const latest = history[0];
+        const previous = history[1];
+        estimateValue = latest.value + ((latest.value - previous.value) * STATISTICAL_TREND_DAMPING);
+        method = `اتجاه مخفف بنسبة ${Math.round(STATISTICAL_TREND_DAMPING * 100)}٪ من آخر قيمتين فعليتين`;
+        basisYears = [fmtYear(previous.year), fmtYear(latest.year)];
+        basisValues = [previous.value, latest.value];
+    } else if (history.length === 1) {
+        estimateValue = history[0].value;
+        method = 'ترحيل آخر قيمة فعلية لعدم توفر سنتين للمقارنة';
+        basisYears = [fmtYear(history[0].year)];
+        basisValues = [history[0].value];
+    } else {
+        return null;
+    }
+
+    const normalized = normalizeStatisticalEstimate(estimateValue, indicator);
+    if (!normalized) return null;
+    return {
+        ...normalized,
+        label: 'إحصائي',
+        method,
+        basisYears,
+        basisValues,
+        targetYear: fmtYear(targetYear),
+    };
+}
+
+function getStatisticalTargetYear(programList) {
+    const availableYears = programList
+        .flatMap(program => Object.keys(program.years).map(Number))
+        .filter(year => DISPLAY_YEARS.includes(year));
+    return availableYears.length ? Math.max(...availableYears) : null;
+}
+
+function applyStatisticalKpiEstimates(programList) {
+    const targetYear = getStatisticalTargetYear(programList);
+    if (targetYear == null) return { applied: false, reason: 'no-years' };
+    let estimatedValues = 0;
+    let programsUpdated = 0;
+    const methods = {};
+
+    programList.forEach(program => {
+        const data = program.years[targetYear];
+        if (!data) return;
+        const actualKpis = calcKPIs(data, program.degree, false);
+        const estimates = {};
+        getIndicatorsForDegree(program.degree).forEach(indicator => {
+            if (actualKpis[indicator.key] != null) return;
+            const estimate = buildStatisticalEstimate(programList, program, targetYear, indicator);
+            if (!estimate) return;
+            estimates[indicator.key] = estimate;
+            methods[estimate.method] = (methods[estimate.method] || 0) + 1;
+            estimatedValues++;
+        });
+        if (Object.keys(estimates).length) {
+            data.statistical_estimates = estimates;
+            programsUpdated++;
+        }
+    });
+
+    return {
+        applied: estimatedValues > 0,
+        targetYear: fmtYear(targetYear),
+        programsUpdated,
+        estimatedValues,
+        methods,
+    };
+}
+
+function applyScopedStatisticalKpiEstimates(program, year, displayData) {
+    if (!program || !displayData || year !== getStatisticalTargetYear(programs)) return displayData;
+
+    const scopedActualKpis = calcKPIs(displayData, program.degree, false);
+    const aggregateData = program.years?.[year] || null;
+    const aggregateActualKpis = aggregateData ? calcKPIs(aggregateData, program.degree, false) : {};
+    const estimates = { ...(displayData.statistical_estimates || {}) };
+
+    getIndicatorsForDegree(program.degree).forEach(indicator => {
+        if (scopedActualKpis[indicator.key] != null || estimates[indicator.key]) return;
+
+        const aggregateValue = statisticalNumericValue(aggregateActualKpis[indicator.key], indicator);
+        if (aggregateValue != null) {
+            const normalized = normalizeStatisticalEstimate(aggregateValue, indicator);
+            if (!normalized) return;
+            estimates[indicator.key] = {
+                ...normalized,
+                label: 'إحصائي',
+                method: 'القيمة الفعلية للبرنامج الكلي كمرجع عند عدم توفر تفصيل الفرع',
+                basisYears: [fmtYear(year)],
+                basisValues: [aggregateValue],
+                targetYear: fmtYear(year),
+            };
+            return;
+        }
+
+        const estimate = buildStatisticalEstimate(programs, program, year, indicator);
+        if (estimate) estimates[indicator.key] = estimate;
+    });
+
+    displayData.statistical_estimates = estimates;
+    return displayData;
 }
 
 function fmtKPI(val, unit) {
@@ -2587,6 +2494,23 @@ function formatSurveyEvidenceText(evidence) {
     return evidence.count > 0
         ? `${evidence.label} - عدد المشاركين: ${fmtNum(evidence.count)}`
         : evidence.label;
+}
+
+function getStatisticalEvidence(d, indicatorKey) {
+    const estimate = d?.statistical_estimates?.[indicatorKey];
+    if (!estimate) return null;
+    return {
+        kind: 'statistical',
+        label: estimate.label || 'إحصائي',
+        method: estimate.method || '',
+        basisYears: Array.isArray(estimate.basisYears) ? estimate.basisYears : [],
+    };
+}
+
+function formatStatisticalEvidenceText(evidence) {
+    if (!evidence) return '';
+    const years = evidence.basisYears.length ? `؛ سنوات الأساس: ${evidence.basisYears.join('، ')}` : '';
+    return `${evidence.label}: ${evidence.method}${years}`;
 }
 
 function getTeachingSupportForProgramYear(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
@@ -2688,15 +2612,15 @@ function buildProgramDisplayData(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
         displayData.citations_per_publication = Math.round((Number(researchSupport.citations_per_publication) || 0) * 10) / 10;
         displayData.research_source = `${researchSupport.research_source || 'faculty_activities_live'}_branch`;
     } else {
-        displayData.faculty_total = 0;
-        displayData.faculty_published = 0;
-        displayData.research_count = 0;
-        displayData.citations = 0;
-        displayData.citations_per_publication = 0;
+        displayData.faculty_total = null;
+        displayData.faculty_published = null;
+        displayData.research_count = null;
+        displayData.citations = null;
+        displayData.citations_per_publication = null;
         displayData.research_source = 'faculty_activities_live_branch';
     }
 
-    return displayData;
+    return applyScopedStatisticalKpiEstimates(prog, year, displayData);
 }
 
 function buildProgramDisplayDataFromRow(row, branch = ALL_BRANCH_FILTER_VALUE) {
@@ -2747,11 +2671,11 @@ function buildProgramDisplayDataFromRow(row, branch = ALL_BRANCH_FILTER_VALUE) {
         displayData.citations_per_publication = Math.round((Number(researchSupport.citations_per_publication) || 0) * 10) / 10;
         displayData.research_source = `${researchSupport.research_source || 'faculty_activities_live'}_branch`;
     } else {
-        displayData.faculty_total = 0;
-        displayData.faculty_published = 0;
-        displayData.research_count = 0;
-        displayData.citations = 0;
-        displayData.citations_per_publication = 0;
+        displayData.faculty_total = null;
+        displayData.faculty_published = null;
+        displayData.research_count = null;
+        displayData.citations = null;
+        displayData.citations_per_publication = null;
         displayData.research_source = 'faculty_activities_live_branch';
     }
 
@@ -3749,6 +3673,13 @@ function showProgramDetail() {
                     ${countHtml}
                 </div>`;
             }
+            const statisticalEvidence = getStatisticalEvidence(d, ind.key);
+            if (statisticalEvidence) {
+                detailHtml += `<div class="kpi-survey-meta">
+                    <span class="kpi-survey-badge statistical">${statisticalEvidence.label}</span>
+                    <span class="kpi-statistical-method">${statisticalEvidence.method}</span>
+                </div>`;
+            }
             return `<div class="kpi-card">
                 <div class="kpi-num">${ind.code || ind.id}</div>
                 <div class="kpi-body">
@@ -3827,20 +3758,91 @@ function populateCompareBranchFilter(slot) {
 }
 
 function populateCompareBranchFilters() {
-    ['a', 'b', 'c'].forEach(slot => {
+    COMPARE_SLOT_KEYS.forEach(slot => {
         populateCompareBranchFilter(slot);
     });
 }
 
+function buildOptionalCompareSlot(slot, index) {
+    const label = COMPARE_SLOT_LABELS[index] || String(index + 1);
+    return `<div id="cmp-slot-${slot}" class="cmp-slot optional hidden" data-compare-slot="${slot}">
+        <div class="cmp-slot-head">
+            <h4>المقارنة ${label}</h4>
+        </div>
+        <div class="compare-pair">
+            <div class="form-group">
+                <label for="cmp-${slot}-prog">البرنامج</label>
+                <select id="cmp-${slot}-prog"><option value="">-- اختر البرنامج --</option></select>
+            </div>
+            <div class="form-group">
+                <label for="cmp-${slot}-year">السنة</label>
+                <select id="cmp-${slot}-year" disabled><option value="">-- اختر السنة --</option></select>
+            </div>
+            <div class="form-group">
+                <label for="cmp-${slot}-branch">الفرع</label>
+                <select id="cmp-${slot}-branch"><option value="${ALL_BRANCH_FILTER_VALUE}">${ALL_BRANCH_FILTER_LABEL}</option></select>
+            </div>
+        </div>
+    </div>`;
+}
+
+function getActiveCompareSlots() {
+    return COMPARE_SLOT_KEYS.slice(0, compareSlotCount);
+}
+
+function resetCompareSlot(slot) {
+    const prog = document.getElementById(`cmp-${slot}-prog`);
+    const year = document.getElementById(`cmp-${slot}-year`);
+    const branch = document.getElementById(`cmp-${slot}-branch`);
+    if (prog) prog.value = '';
+    if (year) {
+        year.innerHTML = '<option value="">-- اختر السنة --</option>';
+        year.value = '';
+        year.disabled = true;
+    }
+    if (branch) {
+        branch.innerHTML = buildBranchOptionsHtml([]);
+        branch.value = ALL_BRANCH_FILTER_VALUE;
+        branch.disabled = true;
+    }
+}
+
+function updateCompareSlotControls() {
+    COMPARE_SLOT_KEYS.forEach((slot, index) => {
+        const card = document.getElementById(`cmp-slot-${slot}`);
+        if (card) card.classList.toggle('hidden', index >= compareSlotCount);
+    });
+
+    const addButton = document.getElementById('cmp-add');
+    const removeButton = document.getElementById('cmp-remove');
+    const count = document.getElementById('cmp-count');
+    if (addButton) {
+        addButton.disabled = compareSlotCount >= MAX_COMPARE_SLOTS;
+        addButton.textContent = compareSlotCount >= MAX_COMPARE_SLOTS
+            ? 'تم بلوغ الحد الأقصى'
+            : '+ إضافة مقارنة';
+    }
+    if (removeButton) removeButton.disabled = compareSlotCount <= MIN_COMPARE_SLOTS;
+    if (count) count.textContent = `${fmtNum(compareSlotCount)} من ${fmtNum(MAX_COMPARE_SLOTS)}`;
+}
+
 function initCompare() {
+    const slotsContainer = document.querySelector('.cmp-slots');
+    COMPARE_SLOT_KEYS.slice(MIN_COMPARE_SLOTS).forEach((slot, offset) => {
+        if (!document.getElementById(`cmp-slot-${slot}`)) {
+            slotsContainer?.insertAdjacentHTML('beforeend', buildOptionalCompareSlot(slot, offset + MIN_COMPARE_SLOTS));
+        }
+    });
+
     const progOpts = '<option value="">-- اختر البرنامج --</option>' +
         programs.map((p,i) => `<option value="${i}">${p.name} (${p.degree}) - ${p.dept}</option>`).join('');
-    ['cmp-a-prog','cmp-b-prog','cmp-c-prog'].forEach(id => {
-        document.getElementById(id).innerHTML = progOpts;
+    COMPARE_SLOT_KEYS.forEach(slot => {
+        const select = document.getElementById(`cmp-${slot}-prog`);
+        if (select) select.innerHTML = progOpts;
     });
     populateCompareBranchFilters();
 
-    ['a','b','c'].forEach(slot => {
+    COMPARE_SLOT_KEYS.forEach(slot => {
         document.getElementById(`cmp-${slot}-prog`).addEventListener('change', () => {
             populateCompareBranchFilter(slot);
             populateCompareYears(slot);
@@ -3857,31 +3859,26 @@ function initCompare() {
         });
     });
 
-    document.getElementById('cmp-add-third').addEventListener('click', () => {
-        compareThirdEnabled = true;
-        document.getElementById('cmp-slot-c').classList.remove('hidden');
-        document.getElementById('cmp-add-third').classList.add('hidden');
-        document.getElementById('cmp-remove-third').classList.remove('hidden');
+    document.getElementById('cmp-add').addEventListener('click', () => {
+        if (compareSlotCount >= MAX_COMPARE_SLOTS) return;
+        compareSlotCount++;
+        updateCompareSlotControls();
+        document.getElementById('cmp-results').classList.add('hidden');
         updateCmpBtn();
     });
 
-    document.getElementById('cmp-remove-third').addEventListener('click', () => {
-        compareThirdEnabled = false;
-        document.getElementById('cmp-slot-c').classList.add('hidden');
-        document.getElementById('cmp-add-third').classList.remove('hidden');
-        document.getElementById('cmp-remove-third').classList.add('hidden');
-        document.getElementById('cmp-c-prog').value = '';
-        const cYear = document.getElementById('cmp-c-year');
-        cYear.innerHTML = '<option value="">-- اختر السنة --</option>';
-        cYear.disabled = true;
-        cYear.value = '';
-        const cBranch = document.getElementById('cmp-c-branch');
-        if (cBranch) cBranch.value = ALL_BRANCH_FILTER_VALUE;
+    document.getElementById('cmp-remove').addEventListener('click', () => {
+        if (compareSlotCount <= MIN_COMPARE_SLOTS) return;
+        const removedSlot = COMPARE_SLOT_KEYS[compareSlotCount - 1];
+        resetCompareSlot(removedSlot);
+        compareSlotCount--;
+        updateCompareSlotControls();
         document.getElementById('cmp-results').classList.add('hidden');
         updateCmpBtn();
     });
 
     document.getElementById('cmp-btn').addEventListener('click', showComparison);
+    updateCompareSlotControls();
     updateCmpBtn();
 }
 
@@ -3908,8 +3905,11 @@ function populateCompareYears(slot) {
 }
 
 function getCompareSelection(slot) {
-    const progValue = document.getElementById(`cmp-${slot}-prog`).value;
-    const yearValue = document.getElementById(`cmp-${slot}-year`).value;
+    const progElement = document.getElementById(`cmp-${slot}-prog`);
+    const yearElement = document.getElementById(`cmp-${slot}-year`);
+    if (!progElement || !yearElement) return null;
+    const progValue = progElement.value;
+    const yearValue = yearElement.value;
     const branchValue = normalizeBranchName(document.getElementById(`cmp-${slot}-branch`)?.value || ALL_BRANCH_FILTER_VALUE) || ALL_BRANCH_FILTER_VALUE;
     const hasProgram = progValue !== '';
     const hasYear = yearValue !== '';
@@ -3931,10 +3931,7 @@ function getCompareSelection(slot) {
 }
 
 function updateCmpBtn() {
-    const first = getCompareSelection('a');
-    const second = getCompareSelection('b');
-    const third = compareThirdEnabled ? getCompareSelection('c') : { slot: 'c' };
-    const valid = !!(first && second && (!compareThirdEnabled || third));
+    const valid = getActiveCompareSlots().every(slot => Boolean(getCompareSelection(slot)));
     document.getElementById('cmp-btn').disabled = !valid;
 }
 
@@ -3971,6 +3968,7 @@ function buildComparisonModel(entries) {
         const rawValues = entries.map(e => e.kpi[ind.key]);
         const formattedValues = rawValues.map(v => fmtKPI(v, ind.unit).text);
         const surveyEvidence = entries.map(e => getSurveyEvidence(e.data, ind.key));
+        const statisticalEvidence = entries.map(e => getStatisticalEvidence(e.data, ind.key));
         const diffs = [];
         for (let i = 1; i < rawValues.length; i++) {
             const base = rawValues[0];
@@ -3981,7 +3979,7 @@ function buildComparisonModel(entries) {
                 diffs.push(null);
             }
         }
-        return { indicator: ind, rawValues, formattedValues, surveyEvidence, diffs };
+        return { indicator: ind, rawValues, formattedValues, surveyEvidence, statisticalEvidence, diffs };
     });
     return { header, rows, indicators };
 }
@@ -4001,8 +3999,7 @@ function buildBranchOptionsHtml(branches = availableFacultyBranches) {
 }
 
 function showComparison() {
-    const selections = [getCompareSelection('a'), getCompareSelection('b')];
-    if (compareThirdEnabled) selections.push(getCompareSelection('c'));
+    const selections = getActiveCompareSlots().map(getCompareSelection);
     if (selections.some(s => !s)) return alert('أكمل اختيار البرنامج والسنة لكل مقارنة مطلوبة');
 
     const entries = selections.map(sel => ({
@@ -4020,15 +4017,19 @@ function showComparison() {
     document.getElementById('cmp-tbody').innerHTML = model.rows.map(row => {
         const valueCells = row.formattedValues.map((v, index) => {
             const evidence = row.surveyEvidence[index];
-            if (!evidence) return `<td>${v}</td>`;
-            const countHtml = evidence.count > 0
+            const statisticalEvidence = row.statisticalEvidence[index];
+            if (!evidence && !statisticalEvidence) return `<td>${v}</td>`;
+            const countHtml = evidence?.count > 0
                 ? `<span class="kpi-survey-count">عدد المشاركين: ${fmtNum(evidence.count)}</span>`
                 : '';
+            const badge = statisticalEvidence
+                ? `<span class="kpi-survey-badge statistical">${statisticalEvidence.label}</span>
+                   <span class="kpi-statistical-method">${statisticalEvidence.method}</span>`
+                : `<span class="kpi-survey-badge ${evidence.kind}">${evidence.label}</span>${countHtml}`;
             return `<td>
                 <div>${v}</div>
                 <div class="kpi-survey-meta">
-                    <span class="kpi-survey-badge ${evidence.kind}">${evidence.label}</span>
-                    ${countHtml}
+                    ${badge}
                 </div>
             </td>`;
         }).join('');
@@ -4064,7 +4065,12 @@ function showComparison() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { position: 'top', labels: { font: { family: 'Tajawal' } } } },
+                plugins: {
+                    legend: {
+                        position: entries.length > 5 ? 'bottom' : 'top',
+                        labels: { font: { family: 'Tajawal', size: entries.length > 5 ? 10 : 12 }, boxWidth: 14 }
+                    }
+                },
                 scales: {
                     x: { ticks: { font: { family: 'Tajawal', size: 10 }, maxRotation: 45 } },
                     y: { grid: { color: '#f0f0f0' }, ticks: { font: { family: 'Tajawal' } } }
@@ -4171,7 +4177,9 @@ function getProgramIndicatorRows() {
         .map(ind => {
             const f = fmtKPI(kpi[ind.key], ind.unit);
             const evidence = getSurveyEvidence(currentProg.data, ind.key);
-            return [getIndicatorLabel(ind), f.text, ind.unit, formatSurveyEvidenceText(evidence)];
+            const statisticalEvidence = getStatisticalEvidence(currentProg.data, ind.key);
+            const note = formatSurveyEvidenceText(evidence) || formatStatisticalEvidenceText(statisticalEvidence);
+            return [getIndicatorLabel(ind), f.text, ind.unit, note];
         });
 }
 
@@ -4193,7 +4201,7 @@ function exportExcel() {
         ['السنة', fmtYear(currentProg.year)],
         ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
         [],
-        ['المؤشر', 'القيمة', 'الوحدة', 'نوع الاستطلاع'],
+        ['المؤشر', 'القيمة', 'الوحدة', 'ملاحظة البيانات'],
         ...getProgramIndicatorRows()
     ];
     const ws = XLSX.utils.aoa_to_sheet(indicatorRows);
@@ -4234,7 +4242,7 @@ function exportCSV() {
         ['السنة', fmtYear(currentProg.year)],
         ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
         [],
-        ['المؤشر', 'القيمة', 'الوحدة', 'نوع الاستطلاع'],
+        ['المؤشر', 'القيمة', 'الوحدة', 'ملاحظة البيانات'],
         ...getProgramIndicatorRows(),
         [],
         ...getSelfStudyExportRows(currentProg.selfStudyReport)
@@ -4252,7 +4260,9 @@ function getCompareExportRows() {
         getIndicatorLabel(row.indicator),
         ...row.formattedValues.map((value, index) => {
             const evidenceText = formatSurveyEvidenceText(row.surveyEvidence[index]);
-            return evidenceText ? `${value} (${evidenceText})` : value;
+            const statisticalText = formatStatisticalEvidenceText(row.statisticalEvidence[index]);
+            const note = evidenceText || statisticalText;
+            return note ? `${value} (${note})` : value;
         }),
         ...row.diffs.map(formatDiffText)
     ]);

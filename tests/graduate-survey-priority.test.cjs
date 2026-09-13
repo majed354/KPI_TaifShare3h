@@ -1,8 +1,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 
-const appSource = fs.readFileSync(require('node:path').join(__dirname, '..', 'js', 'app.js'), 'utf8');
+const appSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'app.js'), 'utf8');
 const context = {
     console,
     URL,
@@ -12,34 +13,79 @@ const context = {
 };
 
 vm.runInNewContext(`${appSource}\n;globalThis.__surveyTestHooks = {
-    applyGraduateSurveyMetrics,
-    aggregateGraduateSurveyRows,
+    applyGraduateSamplesFromShari3ahSurveys,
     getSurveyEvidence,
     buildComparisonModel,
     calcKPIs,
     markAnalyticsSampleMetrics,
+    extractCourseEvaluationMetricsFromShari3ahSurveys,
+    applyStatisticalKpiEstimates,
+    buildProgramDisplayData,
+    getStatisticalEvidence,
+    setProgramsForTest: value => { programs = value; },
 };`, context);
 
 const {
-    applyGraduateSurveyMetrics,
-    aggregateGraduateSurveyRows,
+    applyGraduateSamplesFromShari3ahSurveys,
     getSurveyEvidence,
     buildComparisonModel,
     calcKPIs,
     markAnalyticsSampleMetrics,
+    extractCourseEvaluationMetricsFromShari3ahSurveys,
+    applyStatisticalKpiEstimates,
+    buildProgramDisplayData,
+    getStatisticalEvidence,
+    setProgramsForTest,
 } = context.__surveyTestHooks;
 
-const bachelorMetrics = {
-    '45|الأنظمة|بكالوريوس': {
-        eval_experience: 3.2,
-        eval_experience_sample: 7,
-        performance_rate: 81.2,
-        performance_rate_sample: 6,
-        employment_rate: 42.9,
-        employment_rate_sample: 7,
-        employment_employed_count: 3,
-        eval_employers: 4.75,
-        eval_employers_sample: 3,
+const trendProgram = {
+    name: 'برنامج تجريبي',
+    degree: 'بكالوريوس',
+    years: {
+        45: { eval_courses: 3.5 },
+        46: { eval_courses: 3.7 },
+        47: { eval_courses: null },
+    },
+};
+const trendInfo = applyStatisticalKpiEstimates([trendProgram]);
+assert.equal(trendInfo.targetYear, '1447');
+assert.equal(trendProgram.years[47].statistical_estimates.course_eval.displayValue, 3.75);
+assert.equal(getStatisticalEvidence(trendProgram.years[47], 'course_eval').label, 'إحصائي');
+
+setProgramsForTest([trendProgram]);
+const scopedTrendData = buildProgramDisplayData(trendProgram, 47, 'الحوية');
+const scopedTrendKpis = calcKPIs(scopedTrendData, trendProgram.degree);
+assert.equal(scopedTrendKpis.course_eval, 3.75);
+assert.equal(scopedTrendKpis.student_faculty_ratio, null);
+assert.equal(getStatisticalEvidence(scopedTrendData, 'student_faculty_ratio'), null);
+
+const courseMetrics = extractCourseEvaluationMetricsFromShari3ahSurveys({ courseRecords: [
+    { year: '1447', program: 'ماجستير القانون', degree: 'الماجستير', courseName: 'مشروع بحثي', score: 4.5, respondents: 8 },
+    { year: '1447', program: 'ماجستير القانون', degree: 'الماجستير', courseName: 'الرسالة', score: 4.0, respondents: 2 },
+    { year: '1447', program: 'ماجستير القانون', degree: 'الماجستير', courseName: 'بحث التخرج', score: 2.0, respondents: 5, researchCourse: true },
+] });
+assert.equal(courseMetrics['1447|القانون|الماجستير'].eval_supervision, 4.25);
+assert.equal(courseMetrics['1447|القانون|الماجستير'].eval_supervision_sample, 10);
+assert.equal(courseMetrics['1447|القانون|الماجستير'].supervision_course_count, 2);
+
+const payload = {
+    extractedData: {},
+    graduateSampleKpis: {
+        'p01::1445': {
+            metrics: {
+                performance_rate: { value: 81.2, sampleCount: 6 },
+                employment_rate: { value: 42.9, sampleCount: 7, positiveCount: 3 },
+                eval_employers: { value: 4.75, sampleCount: 3 },
+            },
+        },
+        'p09::1446': {
+            metrics: {
+                eval_supervision: { value: 4.25, sampleCount: 8 },
+                eval_services: { value: 4.12, sampleCount: 8 },
+                eval_employers: { value: 4.75, sampleCount: 2 },
+                employment_rate: { value: 37.5, sampleCount: 8 },
+            },
+        },
     },
 };
 
@@ -50,18 +96,19 @@ const bachelorRow = {
     Semester: 45,
     eval_experience: 4.6,
     eval_experience_source: 'shari3ah_surveys_program_eval',
-    eval_experience_sample: 300,
     performance_rate: null,
     employment_rate: null,
     eval_employers: null,
 };
 
-applyGraduateSurveyMetrics([bachelorRow], bachelorMetrics, new Set(['بكالوريوس']), 'bachelor');
+const info = applyGraduateSamplesFromShari3ahSurveys([bachelorRow], payload);
+assert.equal(info.applied, true);
 assert.equal(bachelorRow.eval_experience, 4.6, 'graduate sample must not replace program experience');
 assert.equal(bachelorRow.performance_rate, 81.2);
 assert.equal(bachelorRow.employment_rate, 42.9);
+assert.equal(bachelorRow.employment_employed_count, 3);
 assert.equal(bachelorRow.eval_employers, 4.75);
-assert.equal(bachelorRow.performance_rate_source, 'graduates_sample_program_bachelor');
+assert.equal(bachelorRow.performance_rate_source, 'graduates_sample_program_shari3ah_surveys');
 assert.equal(getSurveyEvidence(bachelorRow, 'experience_eval'), null);
 assert.equal(getSurveyEvidence(bachelorRow, 'student_performance').kind, 'sample');
 
@@ -72,24 +119,10 @@ const preservedBachelorRow = {
     Semester: 45,
     performance_rate: 91,
 };
-applyGraduateSurveyMetrics([preservedBachelorRow], bachelorMetrics, new Set(['بكالوريوس']), 'bachelor');
+applyGraduateSamplesFromShari3ahSurveys([preservedBachelorRow], payload);
 assert.equal(preservedBachelorRow.performance_rate, 91, 'graduate sample must not replace an existing KPI value');
 assert.equal(preservedBachelorRow.performance_rate_source, undefined);
 
-const postgradMetrics = {
-    '46|الفقه|الماجستير': {
-        eval_experience: 4.25,
-        eval_experience_sample: 8,
-        eval_supervision: 4.25,
-        eval_supervision_sample: 8,
-        eval_services: 4.12,
-        eval_services_sample: 8,
-        employment_rate: 37.5,
-        employment_rate_sample: 8,
-        eval_employers: 4.75,
-        eval_employers_sample: 2,
-    },
-};
 const postgradRow = {
     Dept_aName: 'الشريعة',
     Major_aName: 'الفقه',
@@ -101,28 +134,13 @@ const postgradRow = {
     employment_rate: null,
     eval_employers: null,
 };
-applyGraduateSurveyMetrics([postgradRow], postgradMetrics, new Set(['الماجستير']), 'postgrad');
+applyGraduateSamplesFromShari3ahSurveys([postgradRow], payload);
 assert.equal(postgradRow.eval_experience, null, 'graduate sample is not a source for KPI-PG-1');
 assert.equal(postgradRow.employment_rate, null, 'employment is not a postgraduate KPI in the supplied definition');
 assert.equal(postgradRow.eval_supervision, 4.25);
 assert.equal(postgradRow.eval_services, 4.12);
 assert.equal(postgradRow.eval_employers, 4.75);
 assert.equal(getSurveyEvidence(postgradRow, 'supervision_eval').kind, 'sample');
-
-const separatedPostgrad = aggregateGraduateSurveyRows([
-    {
-        'ما اسم البرنامج ': 'ماجستير الفقه',
-        'سنة التخرج من البرنامج الأكاديمي': '١٤٤٦ هـ',
-        'ما تقييمك العام لجودة الإشراف أثناء الرسالة أو المشروع البحثي': 4,
-    },
-    {
-        'ما اسم البرنامج ': 'دكتوراه الفقه',
-        'سنة التخرج من البرنامج الأكاديمي': '١٤٤٦ هـ',
-        'ما تقييمك العام لجودة الإشراف أثناء الرسالة أو المشروع البحثي': 2,
-    },
-], new Set(['الماجستير', 'دكتوراه']));
-assert.equal(separatedPostgrad.metricsByKey['46|الفقه|الماجستير'].eval_supervision, 4);
-assert.equal(separatedPostgrad.metricsByKey['46|الفقه|دكتوراه'].eval_supervision, 2);
 
 const comparison = buildComparisonModel([
     { label: 'الأنظمة - 1445', program: { degree: 'بكالوريوس' }, data: bachelorRow, kpi: calcKPIs(bachelorRow, 'بكالوريوس') },

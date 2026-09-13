@@ -630,6 +630,16 @@ body.app-blocked { overflow: hidden; }
     background: #fffbeb;
     border: 1px solid #f59e0b;
 }
+.kpi-survey-badge.statistical {
+    color: #1e40af;
+    background: #dbeafe;
+    border: 1px solid #93c5fd;
+}
+.kpi-statistical-method {
+    color: #475569;
+    font-size: 0.68rem;
+    line-height: 1.35;
+}
 .kpi-survey-count {
     color: var(--text-light);
     font-size: 0.68rem;
@@ -802,6 +812,16 @@ body.app-blocked { overflow: hidden; }
     gap: 8px;
     flex-wrap: wrap;
 }
+.cmp-count {
+    color: var(--text-light);
+    font-size: 0.86rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.cmp-actions .btn-sm:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
 .cmp-header {
     display: flex;
     align-items: center;
@@ -813,6 +833,9 @@ body.app-blocked { overflow: hidden; }
 .cmp-table td:not(:first-child) {
     font-weight: 700;
     text-align: center;
+}
+.cmp-table {
+    min-width: max-content;
 }
 .cmp-table th, .cmp-table td {
     white-space: nowrap;

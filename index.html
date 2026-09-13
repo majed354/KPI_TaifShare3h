@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=20260913-statistical47c">
 </head>
 <body>
 <div id="loginOverlay" class="login-overlay">
@@ -211,7 +211,7 @@
         </div>
 
         <div class="card cmp-builder">
-            <p class="cmp-help">اختر برنامجًا وسنة لكل جهة مقارنة. الجهتان الأولى والثانية مطلوبتان، والثالثة اختيارية.</p>
+            <p class="cmp-help">اختر برنامجًا وسنة لكل جهة مقارنة. تبدأ المقارنة بمدخلين، ويمكن زيادتها حتى ١٠ مداخل.</p>
 
             <div class="cmp-slots">
                 <div class="cmp-slot required">
@@ -254,30 +254,12 @@
                     </div>
                 </div>
 
-                <div id="cmp-slot-c" class="cmp-slot optional hidden">
-                    <div class="cmp-slot-head">
-                        <h4>المقارنة الثالثة (اختياري)</h4>
-                    </div>
-                    <div class="compare-pair">
-                        <div class="form-group">
-                            <label>البرنامج</label>
-                            <select id="cmp-c-prog"><option value="">-- اختر البرنامج --</option></select>
-                        </div>
-                        <div class="form-group">
-                            <label>السنة</label>
-                            <select id="cmp-c-year" disabled><option value="">-- اختر السنة --</option></select>
-                        </div>
-                        <div class="form-group">
-                            <label>الفرع</label>
-                            <select id="cmp-c-branch"><option value="__all__">الكل</option></select>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             <div class="cmp-actions">
-                <button id="cmp-add-third" class="btn-sm" type="button">+ إضافة مقارنة ثالثة</button>
-                <button id="cmp-remove-third" class="btn-sm hidden" type="button">حذف المقارنة الثالثة</button>
+                <button id="cmp-add" class="btn-sm" type="button">+ إضافة مقارنة</button>
+                <button id="cmp-remove" class="btn-sm" type="button" disabled>حذف آخر مقارنة</button>
+                <span id="cmp-count" class="cmp-count" aria-live="polite">٢ من ١٠</span>
                 <button id="cmp-btn" class="btn-primary" disabled>عرض المقارنة</button>
             </div>
         </div>
@@ -799,16 +781,11 @@
 
 <script>
 window.KPI_CONFIG = {
-    // خيار قديم: شيت واحد لجميع الدرجات (اتركه فارغًا عند استخدام التقسيم)
-    graduatesSurveySheetUrl: '',
-    // شيت برامج البكالوريوس
-    graduatesSurveyBachelorSheetUrl: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTFZxQeVsbWxxIdmHOugA-NYiGVZOmKL44KquMVUaJJaJRYo0O8XjrMbCETrw0yY9y49aucRSrnXUCy/pub?gid=1084828379&single=true&output=csv',
-    // شيت برامج الدراسات العليا (ماجستير/دكتوراه)
-    graduatesSurveyPostgradSheetUrl: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vScNn4rvHcKi2EB6mSZ31GsqSb4VV7LFnKnUgz5qsu-U8823iHG6gIPmKZgSMofqvsZNc5QeBXWem9C/pub?gid=520745508&single=true&output=csv',
-    // المصدر الأساسي لمؤشر تقويم الطالب لخبرة البرنامج
-    shari3ahSurveysDataUrl: 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/surveys-data.js'
+    // مستودع استطلاعات الرأي هو المصدر الوحيد لجميع مؤشرات الاستطلاعات.
+    shari3ahSurveysDataUrl: 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/surveys-data.js',
+    shari3ahCourseEvaluationsDataUrl: 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/course-evaluations-data.js'
 };
 </script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20260913-statistical47c"></script>
 </body>
 </html>
