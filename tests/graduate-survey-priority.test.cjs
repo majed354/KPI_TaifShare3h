@@ -22,8 +22,10 @@ vm.runInNewContext(`${appSource}\n;globalThis.__surveyTestHooks = {
     applyStatisticalKpiEstimates,
     buildProgramDisplayData,
     buildProgramExportReport,
+    getResearchSupportForProgramYear,
     getStatisticalEvidence,
     setProgramsForTest: value => { programs = value; },
+    setResearchSupportForTest: value => { researchActivitySupportByYearDept = value; },
 };`, context);
 
 const {
@@ -36,8 +38,10 @@ const {
     applyStatisticalKpiEstimates,
     buildProgramDisplayData,
     buildProgramExportReport,
+    getResearchSupportForProgramYear,
     getStatisticalEvidence,
     setProgramsForTest,
+    setResearchSupportForTest,
 } = context.__surveyTestHooks;
 
 const trendProgram = {
@@ -61,11 +65,14 @@ assert.equal(scopedTrendKpis.course_eval, 3.75);
 assert.equal(scopedTrendKpis.student_faculty_ratio, null);
 assert.equal(getStatisticalEvidence(scopedTrendData, 'student_faculty_ratio'), null);
 
-const multiYearExport = buildProgramExportReport([trendProgram], [45, 47], [0]);
+const multiYearExport = buildProgramExportReport([trendProgram], [45, 47], [0], ['الحوية']);
 assert.deepEqual([...multiYearExport.years], [45, 47]);
+assert.deepEqual([...multiYearExport.branches], ['الحوية']);
 assert.equal(multiYearExport.selectedPrograms.length, 1);
+assert.equal(multiYearExport.includedPrograms.length, 1);
 assert.equal(multiYearExport.detailRecords.length, 2);
 assert.equal(multiYearExport.indicatorRecords.length, 22);
+assert.equal(multiYearExport.detailRecords[0].branch, 'إجمالي البرنامج');
 assert.equal(
     multiYearExport.indicatorRecords.find(record => record.detail.year === '1447' && record.code === 'KPI-2').status,
     'إحصائي'
@@ -73,6 +80,34 @@ assert.equal(
 assert.equal(
     multiYearExport.indicatorRecords.find(record => record.detail.year === '1445' && record.code === 'KPI-8').status,
     'غير متوفر'
+);
+
+const branchFilteredExport = buildProgramExportReport([trendProgram], [47], [0], ['تربة']);
+assert.equal(branchFilteredExport.detailRecords.length, 1);
+assert.equal(branchFilteredExport.detailRecords[0].branch, 'إجمالي البرنامج');
+assert.equal(branchFilteredExport.excludedProgramCount, 0);
+
+const islamicBranchProgram = {
+    name: 'الدراسات الإسلامية',
+    degree: 'بكالوريوس',
+    dept: 'الدراسات الإسلامية',
+    years: { 47: { students_total: 100 } },
+};
+const islamicBranchesExport = buildProgramExportReport(
+    [islamicBranchProgram],
+    [47],
+    [0],
+    ['تربة', 'رنية']
+);
+assert.equal(islamicBranchesExport.detailRecords.length, 2);
+assert.deepEqual(Array.from(islamicBranchesExport.detailRecords, record => record.branch), ['تربة', 'رنية']);
+
+setResearchSupportForTest({
+    '1447|الدراسات الإسلامية': { byBranch: { تربة: { faculty_total: 11 } } },
+});
+assert.equal(
+    getResearchSupportForProgramYear(islamicBranchProgram, 47, 'تربة').faculty_total,
+    11
 );
 
 const courseMetrics = extractCourseEvaluationMetricsFromShari3ahSurveys({ courseRecords: [

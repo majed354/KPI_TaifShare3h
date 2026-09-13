@@ -852,7 +852,7 @@ body.app-blocked { overflow: hidden; }
 }
 .program-export-selection {
     display: grid;
-    grid-template-columns: minmax(260px, 0.72fr) minmax(420px, 1.28fr);
+    grid-template-columns: minmax(230px, 0.7fr) minmax(250px, 0.75fr) minmax(420px, 1.3fr);
     gap: 16px;
 }
 .program-export-pick {
@@ -908,7 +908,8 @@ body.app-blocked { overflow: hidden; }
     display: grid;
     gap: 8px;
 }
-.selection-grid.years {
+.selection-grid.years,
+.selection-grid.branches {
     grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
 }
 .selection-grid.programs {
@@ -954,6 +955,12 @@ body.app-blocked { overflow: hidden; }
     color: var(--text-light);
     font-size: 0.78rem;
     font-weight: 600;
+}
+.selection-scope-note {
+    margin-top: 6px;
+    color: #92400e;
+    font-size: 0.74rem;
+    line-height: 1.55;
 }
 .program-export-actions {
     display: flex;

@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=20260913-program-export1">
+    <link rel="stylesheet" href="css/style.css?v=20260913-program-export-branches-scope">
 </head>
 <body>
 <div id="loginOverlay" class="login-overlay">
@@ -296,7 +296,7 @@
         <div class="view-top">
             <div>
                 <h2>تنزيل بيانات البرامج</h2>
-                <p class="view-desc">اختر سنة واحدة أو عدة سنوات، ثم حدد البرامج المطلوبة أو اختر الكل.</p>
+                <p class="view-desc">اختر سنة أو عدة سنوات، والبرامج والفروع المطلوبة، أو استخدم خيار الكل.</p>
             </div>
         </div>
 
@@ -315,6 +315,22 @@
                     </div>
                     <div id="program-export-years" class="selection-grid years"></div>
                     <p id="program-export-years-count" class="selection-count"></p>
+                </section>
+
+                <section class="program-export-pick" aria-labelledby="program-export-branches-title">
+                    <div class="program-export-pick-head">
+                        <div>
+                            <h3 id="program-export-branches-title">الفروع</h3>
+                            <p>يطبّق الاختيار على بكالوريوس الدراسات الإسلامية فقط.</p>
+                        </div>
+                        <label class="selection-all">
+                            <input id="program-export-branches-all" type="checkbox" checked>
+                            <span>كل الفروع</span>
+                        </label>
+                    </div>
+                    <div id="program-export-branches" class="selection-grid branches"></div>
+                    <p id="program-export-branches-count" class="selection-count"></p>
+                    <p class="selection-scope-note">بقية البرامج تُصدَّر على مستوى البرنامج الكلي، مهما كان الفرع المختار هنا.</p>
                 </section>
 
                 <section class="program-export-pick" aria-labelledby="program-export-programs-title">
@@ -878,6 +894,6 @@ window.KPI_CONFIG = {
     shari3ahCourseEvaluationsDataUrl: 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/course-evaluations-data.js'
 };
 </script>
-<script src="js/app.js?v=20260913-program-export1"></script>
+<script src="js/app.js?v=20260913-program-export-branches-scope"></script>
 </body>
 </html>
