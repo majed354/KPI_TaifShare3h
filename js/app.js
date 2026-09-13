@@ -88,6 +88,12 @@ const SURVEY_DEPT_FALLBACK_RULES = {
     'الأنظمة': 'single_program_per_degree',
     'الدراسات الإسلامية': 'single_program_per_degree',
 };
+const GRADUATE_SAMPLE_METRICS_BY_DEGREE = {
+    // استبانة الخريجين مصدر تكميلي لمؤشرات لا تغطيها الاستطلاعات الأصلية الحالية.
+    'بكالوريوس': new Set(['performance_rate', 'employment_rate', 'eval_employers']),
+    'الماجستير': new Set(['eval_supervision', 'eval_services', 'eval_employers']),
+    'دكتوراه': new Set(['eval_supervision', 'eval_services', 'eval_employers']),
+};
 const STUDENT_CATEGORY_DEFS = [
     {
         id: 'excellent',
@@ -600,6 +606,15 @@ function normalizeSurveyProgramName(name) {
         .replace(/^(?:ال)?(?:بكالوريوس|ماجستير|الماجستير|دكتوراه)\s+/, '');
     if (!base) return '';
     return GRADUATE_PROGRAM_ALIASES[base] || base;
+}
+
+function detectSurveyDegree(programName, allowedDegrees = null) {
+    const raw = normalizeArabicText(programName);
+    if (/دكتوراه/.test(raw)) return 'دكتوراه';
+    if (/ماجستير/.test(raw)) return 'الماجستير';
+    if (/بكالوريوس/.test(raw)) return 'بكالوريوس';
+    if (allowedDegrees && allowedDegrees.size === 1) return [...allowedDegrees][0];
+    return '';
 }
 
 function buildProgramMajorDegreeKey(programName, degreeName) {
@@ -1209,7 +1224,7 @@ function resolveGraduateSurveyCsvUrl(url) {
     }
 }
 
-function aggregateGraduateSurveyRows(surveyRows) {
+function aggregateGraduateSurveyRows(surveyRows, allowedDegrees = null) {
     if (!surveyRows.length) return { metricsByKey: {}, groups: 0, matchedRows: 0, reason: 'empty' };
 
     const headers = Object.keys(surveyRows[0]);
@@ -1222,10 +1237,11 @@ function aggregateGraduateSurveyRows(surveyRows) {
     let matchedRows = 0;
     surveyRows.forEach(row => {
         const program = normalizeSurveyProgramName(row[columns.program]);
+        const degree = detectSurveyDegree(row[columns.program], allowedDegrees);
         const year = parseSurveyYear(row[columns.year]);
         if (!program || !year) return;
 
-        const key = `${year}|${program}`;
+        const key = `${year}|${program}|${degree || '*'}`;
         if (!grouped[key]) {
             grouped[key] = {
                 responses: 0,
@@ -1327,6 +1343,15 @@ function isDegreeAllowed(row, allowedDegrees) {
     return allowedDegrees.has(degree);
 }
 
+function isMetricMissing(value) {
+    return value == null || String(value).trim() === '';
+}
+
+function getGraduateSampleMetricKeys(degreeName) {
+    const degree = normalizeDegree(degreeName);
+    return GRADUATE_SAMPLE_METRICS_BY_DEGREE[degree] || new Set();
+}
+
 function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, sourceLabel = '') {
     let appliedRows = 0;
     const matchedGroups = new Set();
@@ -1347,62 +1372,66 @@ function applyGraduateSurveyMetrics(rows, metricsByKey, allowedDegrees = null, s
 
         const year = parseInt(row.Semester, 10);
         const degree = normalizeDegree(row.Degree_aName);
-        const majorKey = `${year}|${normalizeSurveyProgramName(row.Major_aName)}`;
+        const normalizedMajor = normalizeSurveyProgramName(row.Major_aName);
+        const majorKey = `${year}|${normalizedMajor}|${degree}`;
+        const legacyMajorKey = `${year}|${normalizedMajor}|*`;
         const normalizedDept = normalizeSurveyProgramName(normalizeDepartment(row.Dept_aName));
-        const deptKey = `${year}|${normalizedDept}`;
+        const deptKey = `${year}|${normalizedDept}|${degree}`;
+        const legacyDeptKey = `${year}|${normalizedDept}|*`;
         const deptDegreeKey = `${year}|${normalizedDept}|${degree}`;
 
-        const hasProgramMetrics = Boolean(metricsByKey[majorKey]);
+        const matchedProgramKey = metricsByKey[majorKey] ? majorKey : (metricsByKey[legacyMajorKey] ? legacyMajorKey : '');
+        const matchedDeptKey = metricsByKey[deptKey] ? deptKey : (metricsByKey[legacyDeptKey] ? legacyDeptKey : '');
+        const hasProgramMetrics = Boolean(matchedProgramKey);
         const deptFallbackEnabled = isDeptSurveyFallbackAllowed(normalizedDept);
         const canUseDeptFallback = !hasProgramMetrics
             && deptFallbackEnabled
-            && Boolean(metricsByKey[deptKey])
+            && Boolean(matchedDeptKey)
             && deptDegreeProgramCounts[deptDegreeKey] === 1;
-        const metrics = hasProgramMetrics ? metricsByKey[majorKey] : (canUseDeptFallback ? metricsByKey[deptKey] : null);
+        const metrics = hasProgramMetrics
+            ? metricsByKey[matchedProgramKey]
+            : (canUseDeptFallback ? metricsByKey[matchedDeptKey] : null);
         if (!metrics) return;
 
+        const eligibleMetrics = getGraduateSampleMetricKeys(degree);
+        const usedProgramMetrics = hasProgramMetrics;
+        const scope = usedProgramMetrics ? 'program' : 'dept';
+        const sampleSource = `graduates_sample_${scope}${sourceLabel ? `_${sourceLabel}` : ''}`;
         let touched = false;
-        if (metrics.eval_courses != null) {
-            row.eval_courses = metrics.eval_courses;
-            row.eval_courses_sample = metrics.eval_courses_sample || 0;
-            touched = true;
-        }
-        if (metrics.eval_experience != null) {
-            row.eval_experience = metrics.eval_experience;
-            row.eval_experience_sample = metrics.eval_experience_sample || 0;
-            touched = true;
-        }
-        if (metrics.eval_supervision != null) {
+        if (eligibleMetrics.has('eval_supervision') && isMetricMissing(row.eval_supervision) && metrics.eval_supervision != null) {
             row.eval_supervision = metrics.eval_supervision;
             row.eval_supervision_sample = metrics.eval_supervision_sample || 0;
+            row.eval_supervision_source = sampleSource;
             touched = true;
         }
-        if (metrics.eval_services != null) {
+        if (eligibleMetrics.has('eval_services') && isMetricMissing(row.eval_services) && metrics.eval_services != null) {
             row.eval_services = metrics.eval_services;
             row.eval_services_sample = metrics.eval_services_sample || 0;
+            row.eval_services_source = sampleSource;
             touched = true;
         }
-        if (metrics.performance_rate != null) {
+        if (eligibleMetrics.has('performance_rate') && isMetricMissing(row.performance_rate) && metrics.performance_rate != null) {
             row.performance_rate = metrics.performance_rate;
             row.performance_rate_sample = metrics.performance_rate_sample || 0;
+            row.performance_rate_source = sampleSource;
             touched = true;
         }
-        if (metrics.employment_rate != null) {
+        if (eligibleMetrics.has('employment_rate') && isMetricMissing(row.employment_rate) && metrics.employment_rate != null) {
             row.employment_rate = metrics.employment_rate;
             row.employment_employed_count = metrics.employment_employed_count || 0;
             row.employment_rate_sample = metrics.employment_rate_sample || 0;
+            row.employment_rate_source = sampleSource;
             touched = true;
         }
-        if (metrics.eval_employers != null) {
+        if (eligibleMetrics.has('eval_employers') && isMetricMissing(row.eval_employers) && metrics.eval_employers != null) {
             row.eval_employers = metrics.eval_employers;
             row.eval_employers_sample = metrics.eval_employers_sample || 0;
+            row.eval_employers_source = sampleSource;
             touched = true;
         }
         if (touched) {
-            const usedProgramMetrics = hasProgramMetrics;
-            const baseSource = usedProgramMetrics ? 'graduates_survey_program' : 'graduates_survey_dept';
-            row.survey_source = sourceLabel ? `${baseSource}_${sourceLabel}` : baseSource;
-            matchedGroups.add(usedProgramMetrics ? majorKey : deptKey);
+            row.survey_source = sampleSource;
+            matchedGroups.add(usedProgramMetrics ? matchedProgramKey : matchedDeptKey);
             appliedRows++;
         }
     });
@@ -1521,7 +1550,7 @@ async function applyGraduateSurveyIndicatorsFromSheet(rows, rawUrl, allowedDegre
     const surveyRows = parseCSVQuotedObjects(csvText, ',');
     if (!surveyRows.length) return { applied: false, reason: 'empty-sheet' };
 
-    const surveyAgg = aggregateGraduateSurveyRows(surveyRows);
+    const surveyAgg = aggregateGraduateSurveyRows(surveyRows, allowedDegrees);
     if (!Object.keys(surveyAgg.metricsByKey).length) {
         return { applied: false, reason: surveyAgg.reason || 'no-metrics', surveyRows: surveyRows.length };
     }
@@ -2373,8 +2402,8 @@ async function loadData() {
         allRows = parseCSV(csv);
         const branchInfo = await loadIslamicBranchData();
         const durationInfo = await applyAverageGraduationDurationFromDetails(allRows);
-        const surveyInfo = await applyGraduateSurveyIndicators(allRows);
         const experienceInfo = await applyProgramExperienceFromShari3ahSurveys(allRows);
+        const surveyInfo = await applyGraduateSurveyIndicators(allRows);
         const researchInfo = await applyResearchIndicatorsFromActivities(allRows);
         const fteInfo = await applyTeachingBasedFacultyFTE(allRows);
         programs = buildPrograms(allRows);
@@ -2530,20 +2559,34 @@ function fmtKPI(val, unit) {
     return { text: String(val), cls: '' };
 }
 
-function getSurveySampleCount(d, indicatorKey) {
+function getSurveyEvidence(d, indicatorKey) {
     const keyMap = {
-        experience_eval: 'eval_experience_sample',
-        course_eval: 'eval_courses_sample',
-        supervision_eval: 'eval_supervision_sample',
-        services_satisfaction: 'eval_services_sample',
-        student_performance: 'performance_rate_sample',
-        employment_rate: 'employment_rate_sample',
-        employer_eval: 'eval_employers_sample',
+        experience_eval: { count: 'eval_experience_sample', source: 'eval_experience_source' },
+        course_eval: { count: 'eval_courses_sample', source: 'eval_courses_source' },
+        supervision_eval: { count: 'eval_supervision_sample', source: 'eval_supervision_source' },
+        services_satisfaction: { count: 'eval_services_sample', source: 'eval_services_source' },
+        student_performance: { count: 'performance_rate_sample', source: 'performance_rate_source' },
+        employment_rate: { count: 'employment_rate_sample', source: 'employment_rate_source' },
+        employer_eval: { count: 'eval_employers_sample', source: 'eval_employers_source' },
     };
-    const sampleKey = keyMap[indicatorKey];
-    if (!sampleKey) return 0;
-    const count = Number(d[sampleKey]);
-    return Number.isFinite(count) && count > 0 ? Math.round(count) : 0;
+    const keys = keyMap[indicatorKey];
+    if (!keys) return null;
+
+    const countValue = Number(d[keys.count]);
+    const count = Number.isFinite(countValue) && countValue > 0 ? Math.round(countValue) : 0;
+    const source = String(d[keys.source] || '');
+
+    if (source.startsWith('graduates_sample_')) {
+        return { kind: 'sample', label: 'استطلاع عينة', count };
+    }
+    return null;
+}
+
+function formatSurveyEvidenceText(evidence) {
+    if (!evidence) return '';
+    return evidence.count > 0
+        ? `${evidence.label} - عدد المشاركين: ${fmtNum(evidence.count)}`
+        : evidence.label;
 }
 
 function getTeachingSupportForProgramYear(prog, year, branch = ALL_BRANCH_FILTER_VALUE) {
@@ -3696,9 +3739,15 @@ function showProgramDetail() {
             } else if (ind.key === 'avg_time_to_graduate' && (d.avg_time_to_graduate_count || 0) > 0) {
                 detailHtml = `<div class="kpi-detail">(من ${fmtNum(d.avg_time_to_graduate_count)} خريج)</div>`;
             }
-            const sampleCount = getSurveySampleCount(d, ind.key);
-            if (sampleCount > 0) {
-                detailHtml += `<div class="kpi-detail kpi-sample">(العينة ${fmtNum(sampleCount)} طلاب)</div>`;
+            const surveyEvidence = getSurveyEvidence(d, ind.key);
+            if (surveyEvidence) {
+                const countHtml = surveyEvidence.count > 0
+                    ? `<span class="kpi-survey-count">عدد المشاركين: ${fmtNum(surveyEvidence.count)}</span>`
+                    : '';
+                detailHtml += `<div class="kpi-survey-meta">
+                    <span class="kpi-survey-badge ${surveyEvidence.kind}">${surveyEvidence.label}</span>
+                    ${countHtml}
+                </div>`;
             }
             return `<div class="kpi-card">
                 <div class="kpi-num">${ind.code || ind.id}</div>
@@ -3921,6 +3970,7 @@ function buildComparisonModel(entries) {
     const rows = indicators.map(ind => {
         const rawValues = entries.map(e => e.kpi[ind.key]);
         const formattedValues = rawValues.map(v => fmtKPI(v, ind.unit).text);
+        const surveyEvidence = entries.map(e => getSurveyEvidence(e.data, ind.key));
         const diffs = [];
         for (let i = 1; i < rawValues.length; i++) {
             const base = rawValues[0];
@@ -3931,7 +3981,7 @@ function buildComparisonModel(entries) {
                 diffs.push(null);
             }
         }
-        return { indicator: ind, rawValues, formattedValues, diffs };
+        return { indicator: ind, rawValues, formattedValues, surveyEvidence, diffs };
     });
     return { header, rows, indicators };
 }
@@ -3968,7 +4018,20 @@ function showComparison() {
         `<tr>${model.header.map(h => `<th>${h}</th>`).join('')}</tr>`;
 
     document.getElementById('cmp-tbody').innerHTML = model.rows.map(row => {
-        const valueCells = row.formattedValues.map(v => `<td>${v}</td>`).join('');
+        const valueCells = row.formattedValues.map((v, index) => {
+            const evidence = row.surveyEvidence[index];
+            if (!evidence) return `<td>${v}</td>`;
+            const countHtml = evidence.count > 0
+                ? `<span class="kpi-survey-count">عدد المشاركين: ${fmtNum(evidence.count)}</span>`
+                : '';
+            return `<td>
+                <div>${v}</div>
+                <div class="kpi-survey-meta">
+                    <span class="kpi-survey-badge ${evidence.kind}">${evidence.label}</span>
+                    ${countHtml}
+                </div>
+            </td>`;
+        }).join('');
         const diffCells = row.diffs.map(d => `<td>${formatDiffCell(d)}</td>`).join('');
         return `<tr><td>${getIndicatorLabel(row.indicator)}</td>${valueCells}${diffCells}</tr>`;
     }).join('');
@@ -4107,7 +4170,8 @@ function getProgramIndicatorRows() {
     return getIndicatorsForDegree(currentProg.prog.degree)
         .map(ind => {
             const f = fmtKPI(kpi[ind.key], ind.unit);
-            return [getIndicatorLabel(ind), f.text, ind.unit];
+            const evidence = getSurveyEvidence(currentProg.data, ind.key);
+            return [getIndicatorLabel(ind), f.text, ind.unit, formatSurveyEvidenceText(evidence)];
         });
 }
 
@@ -4129,11 +4193,11 @@ function exportExcel() {
         ['السنة', fmtYear(currentProg.year)],
         ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
         [],
-        ['المؤشر', 'القيمة', 'الوحدة'],
+        ['المؤشر', 'القيمة', 'الوحدة', 'نوع الاستطلاع'],
         ...getProgramIndicatorRows()
     ];
     const ws = XLSX.utils.aoa_to_sheet(indicatorRows);
-    ws['!cols'] = [{ wch: 42 }, { wch: 18 }, { wch: 12 }];
+    ws['!cols'] = [{ wch: 42 }, { wch: 18 }, { wch: 12 }, { wch: 34 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'المؤشرات');
     if (currentProg.selfStudyReport) {
@@ -4170,7 +4234,7 @@ function exportCSV() {
         ['السنة', fmtYear(currentProg.year)],
         ['الفرع', currentProg.branchLabel || ALL_BRANCH_FILTER_LABEL],
         [],
-        ['المؤشر', 'القيمة', 'الوحدة'],
+        ['المؤشر', 'القيمة', 'الوحدة', 'نوع الاستطلاع'],
         ...getProgramIndicatorRows(),
         [],
         ...getSelfStudyExportRows(currentProg.selfStudyReport)
@@ -4186,7 +4250,10 @@ function getCompareExportRows() {
     if (!currentProg || !currentProg.cmp || !currentProg.model) return [];
     return currentProg.model.rows.map(row => [
         getIndicatorLabel(row.indicator),
-        ...row.formattedValues,
+        ...row.formattedValues.map((value, index) => {
+            const evidenceText = formatSurveyEvidenceText(row.surveyEvidence[index]);
+            return evidenceText ? `${value} (${evidenceText})` : value;
+        }),
         ...row.diffs.map(formatDiffText)
     ]);
 }
@@ -5507,6 +5574,17 @@ function analyticsMetricHeader(metric) {
     return metric.unit ? `${metric.label} (${metric.unit})` : metric.label;
 }
 
+function markAnalyticsSampleMetrics(metricDefs, records) {
+    return metricDefs.map(metric => {
+        if (!metric.sampleSourceKey) return metric;
+        const usesGraduateSample = records.some(row =>
+            String(row[metric.sampleSourceKey] || '').startsWith('graduates_sample_')
+        );
+        if (!usesGraduateSample) return metric;
+        return { ...metric, label: `${metric.label} - استطلاع عينة` };
+    });
+}
+
 function analyticsText(value, fallback = 'غير محدد') {
     const text = String(value ?? '').trim();
     return text || fallback;
@@ -5611,6 +5689,7 @@ function getAnalyticsSourceDefinitions() {
                     id: 'supervision_eval',
                     label: 'متوسط جودة الإشراف العلمي',
                     unit: 'درجة',
+                    sampleSourceKey: 'eval_supervision_source',
                     compute: records => analyticsWeightedAverage(records, row => row.eval_supervision, row => row.eval_supervision_sample, 1),
                     format: value => analyticsFormatDecimal(value, 2)
                 },
@@ -5618,6 +5697,7 @@ function getAnalyticsSourceDefinitions() {
                     id: 'services_eval',
                     label: 'متوسط رضا الطلاب عن الخدمات',
                     unit: 'درجة',
+                    sampleSourceKey: 'eval_services_source',
                     compute: records => analyticsWeightedAverage(records, row => row.eval_services, row => row.eval_services_sample, 1),
                     format: value => analyticsFormatDecimal(value, 2)
                 },
@@ -5625,6 +5705,7 @@ function getAnalyticsSourceDefinitions() {
                     id: 'student_performance',
                     label: 'متوسط مستوى أداء الطالب',
                     unit: '%',
+                    sampleSourceKey: 'performance_rate_source',
                     compute: records => analyticsWeightedAverage(records, row => row.performance_rate, row => row.performance_rate_sample, 1),
                     format: analyticsFormatPercent
                 },
@@ -5632,6 +5713,7 @@ function getAnalyticsSourceDefinitions() {
                     id: 'employment_rate',
                     label: 'توظيف الخريجين أو التحاقهم بالدراسات العليا',
                     unit: '%',
+                    sampleSourceKey: 'employment_rate_source',
                     compute: records => analyticsWeightedAverage(records, row => row.employment_rate, row => row.employment_rate_sample, 1),
                     format: analyticsFormatPercent
                 },
@@ -5639,6 +5721,7 @@ function getAnalyticsSourceDefinitions() {
                     id: 'employer_eval',
                     label: 'متوسط تقويم جهات التوظيف',
                     unit: 'درجة',
+                    sampleSourceKey: 'eval_employers_source',
                     compute: records => analyticsWeightedAverage(records, row => row.eval_employers, row => row.eval_employers_sample, 1),
                     format: value => analyticsFormatDecimal(value, 2)
                 },
@@ -6266,14 +6349,14 @@ function runAnalyticsReport() {
         students_female: 'الطالبات المرصودات',
         students_new: 'المستجدون المرصودون'
     };
-    const metricDefs = branchFilterValue
+    const branchMetricDefs = branchFilterValue
         ? selectedMetricDefs.map(metric => ({
             ...metric,
             label: branchMetricLabels[metric.id] || metric.label
         }))
         : selectedMetricDefs;
 
-    if (!metricDefs.length) {
+    if (!branchMetricDefs.length) {
         alert('اختر إحصائية واحدة على الأقل قبل بناء التقرير.');
         return;
     }
@@ -6286,6 +6369,7 @@ function runAnalyticsReport() {
         alert('لا توجد بيانات مطابقة للفلاتر المختارة.');
         return;
     }
+    const metricDefs = markAnalyticsSampleMetrics(branchMetricDefs, filteredRows);
 
     const activeFilters = source.filters
         .map(field => {
