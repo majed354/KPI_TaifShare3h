@@ -21,6 +21,7 @@ vm.runInNewContext(`${appSource}\n;globalThis.__surveyTestHooks = {
     extractCourseEvaluationMetricsFromShari3ahSurveys,
     applyStatisticalKpiEstimates,
     buildProgramDisplayData,
+    buildProgramExportReport,
     getStatisticalEvidence,
     setProgramsForTest: value => { programs = value; },
 };`, context);
@@ -34,6 +35,7 @@ const {
     extractCourseEvaluationMetricsFromShari3ahSurveys,
     applyStatisticalKpiEstimates,
     buildProgramDisplayData,
+    buildProgramExportReport,
     getStatisticalEvidence,
     setProgramsForTest,
 } = context.__surveyTestHooks;
@@ -58,6 +60,20 @@ const scopedTrendKpis = calcKPIs(scopedTrendData, trendProgram.degree);
 assert.equal(scopedTrendKpis.course_eval, 3.75);
 assert.equal(scopedTrendKpis.student_faculty_ratio, null);
 assert.equal(getStatisticalEvidence(scopedTrendData, 'student_faculty_ratio'), null);
+
+const multiYearExport = buildProgramExportReport([trendProgram], [45, 47], [0]);
+assert.deepEqual([...multiYearExport.years], [45, 47]);
+assert.equal(multiYearExport.selectedPrograms.length, 1);
+assert.equal(multiYearExport.detailRecords.length, 2);
+assert.equal(multiYearExport.indicatorRecords.length, 22);
+assert.equal(
+    multiYearExport.indicatorRecords.find(record => record.detail.year === '1447' && record.code === 'KPI-2').status,
+    'إحصائي'
+);
+assert.equal(
+    multiYearExport.indicatorRecords.find(record => record.detail.year === '1445' && record.code === 'KPI-8').status,
+    'غير متوفر'
+);
 
 const courseMetrics = extractCourseEvaluationMetricsFromShari3ahSurveys({ courseRecords: [
     { year: '1447', program: 'ماجستير القانون', degree: 'الماجستير', courseName: 'مشروع بحثي', score: 4.5, respondents: 8 },

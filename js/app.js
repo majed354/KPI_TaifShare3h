@@ -146,6 +146,7 @@ let appBootPromise = null;
 let loginMembersById = null;
 let analyticsChart = null;
 let currentAnalyticsReport = null;
+let currentProgramExportReport = null;
 let studentCategoryChart = null;
 let currentStudentCategoryReport = null;
 let teachingProgramSupportByKey = {};
@@ -470,6 +471,7 @@ async function startApp() {
         initDashboard();
         initProgramView();
         initCompare();
+        initProgramExportView();
 
         updateLoadingMessage('جاري تحميل السجلات التفصيلية...');
         await Promise.all([loadGraduates(), loadNonCompleters(), loadStudentDetails(), loadFacultyRoster()]);
@@ -4295,6 +4297,418 @@ function exportCompareCSV() {
     if (!currentProg || !currentProg.cmp || !currentProg.model) return;
     const rows = [currentProg.model.header, ...getCompareExportRows()];
     downloadCSV('مقارنة-المؤشرات.csv', rows);
+}
+
+// ========================================
+// تنزيل بيانات البرامج لعدة سنوات وبرامج
+// ========================================
+const PROGRAM_EXPORT_DETAIL_COLUMNS = [
+    { key: 'year', label: 'السنة', width: 11 },
+    { key: 'program', label: 'البرنامج', width: 30 },
+    { key: 'degree', label: 'الدرجة', width: 16 },
+    { key: 'department', label: 'القسم', width: 22 },
+    { key: 'scope', label: 'نطاق البيانات', width: 18 },
+    { key: 'students_total', label: 'إجمالي المنتظمين', width: 18 },
+    { key: 'students_male', label: 'الذكور', width: 12 },
+    { key: 'students_female', label: 'الإناث', width: 12 },
+    { key: 'students_saudi', label: 'السعوديون', width: 14 },
+    { key: 'students_international', label: 'الدوليون', width: 14 },
+    { key: 'students_new', label: 'المستجدون', width: 14 },
+    { key: 'students_retained', label: 'المستبقون', width: 14 },
+    { key: 'prev_new_count', label: 'دفعة الاستبقاء', width: 16 },
+    { key: 'graduates_total', label: 'إجمالي الخريجين', width: 17 },
+    { key: 'graduates_ontime', label: 'الخريجون بالوقت', width: 17 },
+    { key: 'new_4_ago_count', label: 'دفعة التخرج', width: 15 },
+    { key: 'avg_time_to_graduate', label: 'متوسط مدة التخرج', width: 19 },
+    { key: 'avg_time_to_graduate_count', label: 'عدد الخريجين المقاس', width: 20 },
+    { key: 'sections_total', label: 'الشعب', width: 11 },
+    { key: 'faculty_base', label: 'هيئة التدريس (FTE)', width: 20 },
+    { key: 'research_count', label: 'الأبحاث', width: 12 },
+    { key: 'citations', label: 'الاقتباسات', width: 13 },
+    { key: 'faculty_source', label: 'مصدر هيئة التدريس', width: 24 },
+    { key: 'research_source', label: 'مصدر النشاط العلمي', width: 30 },
+];
+
+const PROGRAM_EXPORT_INDICATOR_COLUMNS = [
+    { key: 'code', label: 'رمز المؤشر', width: 15 },
+    { key: 'indicator', label: 'اسم المؤشر', width: 44 },
+    { key: 'value', label: 'القيمة', width: 16 },
+    { key: 'unit', label: 'الوحدة', width: 12 },
+    { key: 'status', label: 'حالة البيانات', width: 22 },
+    { key: 'note', label: 'ملاحظة البيانات', width: 52 },
+];
+
+function programExportRawValue(value) {
+    if (value == null || value === '') return '';
+    if (typeof value === 'number') return Number.isFinite(value) ? value : '';
+    return value;
+}
+
+function buildProgramExportDetailRecord(program, year) {
+    const data = buildProgramDisplayData(program, year, ALL_BRANCH_FILTER_VALUE);
+    if (!data) return null;
+    return {
+        year: fmtYear(year),
+        yearValue: year,
+        program: program.name,
+        degree: program.degree,
+        department: program.dept,
+        scope: ALL_BRANCH_FILTER_LABEL,
+        students_total: data.students_total,
+        students_male: data.students_male,
+        students_female: data.students_female,
+        students_saudi: data.students_saudi,
+        students_international: data.students_international,
+        students_new: data.students_new,
+        students_retained: data.students_retained,
+        prev_new_count: data.prev_new_count,
+        graduates_total: data.graduates_total,
+        graduates_ontime: data.graduates_ontime,
+        new_4_ago_count: data.new_4_ago_count,
+        avg_time_to_graduate: data.avg_time_to_graduate,
+        avg_time_to_graduate_count: data.avg_time_to_graduate_count,
+        sections_total: data.sections_total,
+        faculty_base: getFacultyBaseForRatio(data),
+        research_count: data.research_count,
+        citations: data.citations,
+        faculty_source: data.faculty_ratio_source || '',
+        research_source: data.research_source || '',
+        data,
+        programRef: program,
+    };
+}
+
+function buildProgramExportIndicatorRecord(detail, indicator, kpi) {
+    const rawValue = kpi[indicator.key];
+    const surveyEvidence = getSurveyEvidence(detail.data, indicator.key);
+    const statisticalEvidence = getStatisticalEvidence(detail.data, indicator.key);
+    let status = 'فعلي';
+    let statusKind = 'actual';
+    let note = '';
+
+    if (rawValue == null) {
+        status = 'غير متوفر';
+        statusKind = 'unavailable';
+    } else if (statisticalEvidence) {
+        status = 'إحصائي';
+        statusKind = 'statistical';
+        note = formatStatisticalEvidenceText(statisticalEvidence);
+    } else if (surveyEvidence) {
+        status = 'فعلي - استطلاع عينة';
+        statusKind = 'sample';
+        note = formatSurveyEvidenceText(surveyEvidence);
+    }
+
+    return {
+        detail,
+        code: indicator.code || String(indicator.id),
+        indicator: indicator.name,
+        value: rawValue == null ? '' : rawValue,
+        displayValue: fmtKPI(rawValue, indicator.unit).text,
+        unit: indicator.unit,
+        status,
+        statusKind,
+        note,
+    };
+}
+
+function buildProgramExportReport(programList, selectedYears, selectedProgramIndexes) {
+    const years = [...new Set(selectedYears.map(Number).filter(Number.isFinite))].sort((a, b) => a - b);
+    const indexes = [...new Set(selectedProgramIndexes.map(Number).filter(Number.isInteger))]
+        .filter(index => programList[index]);
+    const selectedPrograms = indexes.map(index => programList[index]);
+    const detailRecords = [];
+    const indicatorRecords = [];
+
+    years.forEach(year => {
+        selectedPrograms.forEach(program => {
+            const detail = buildProgramExportDetailRecord(program, year);
+            if (!detail) return;
+            detailRecords.push(detail);
+            const kpi = calcKPIs(detail.data, program.degree);
+            getIndicatorsForDegree(program.degree).forEach(indicator => {
+                indicatorRecords.push(buildProgramExportIndicatorRecord(detail, indicator, kpi));
+            });
+        });
+    });
+
+    const actualIndicators = indicatorRecords.filter(record => ['actual', 'sample'].includes(record.statusKind)).length;
+    const statisticalIndicators = indicatorRecords.filter(record => record.statusKind === 'statistical').length;
+    const unavailableIndicators = indicatorRecords.filter(record => record.statusKind === 'unavailable').length;
+    const yearPart = years.map(fmtYear).join('-');
+    const programPart = selectedPrograms.length === programList.length
+        ? 'كل-البرامج'
+        : `${selectedPrograms.length}-برامج`;
+
+    return {
+        years,
+        selectedPrograms,
+        detailRecords,
+        indicatorRecords,
+        actualIndicators,
+        statisticalIndicators,
+        unavailableIndicators,
+        filenameBase: safeFileName(`بيانات-البرامج-${yearPart}-${programPart}`),
+    };
+}
+
+function getProgramExportDetailHeaders() {
+    return PROGRAM_EXPORT_DETAIL_COLUMNS.map(column => column.label);
+}
+
+function getProgramExportDetailRow(detail) {
+    return PROGRAM_EXPORT_DETAIL_COLUMNS.map(column => programExportRawValue(detail[column.key]));
+}
+
+function getProgramExportIndicatorHeaders(includeIdentity = true) {
+    const identity = includeIdentity ? ['السنة', 'البرنامج', 'الدرجة', 'القسم'] : [];
+    return [...identity, ...PROGRAM_EXPORT_INDICATOR_COLUMNS.map(column => column.label)];
+}
+
+function getProgramExportIndicatorRow(record, includeIdentity = true) {
+    const identity = includeIdentity
+        ? [record.detail.year, record.detail.program, record.detail.degree, record.detail.department]
+        : [];
+    return [
+        ...identity,
+        record.code,
+        record.indicator,
+        programExportRawValue(record.value),
+        record.unit,
+        record.status,
+        record.note,
+    ];
+}
+
+function getProgramExportCombinedHeaders() {
+    return [
+        ...getProgramExportDetailHeaders(),
+        ...PROGRAM_EXPORT_INDICATOR_COLUMNS.map(column => column.label),
+    ];
+}
+
+function getProgramExportCombinedRow(record) {
+    return [
+        ...getProgramExportDetailRow(record.detail),
+        ...getProgramExportIndicatorRow(record, false),
+    ];
+}
+
+function getProgramExportCheckboxes(group) {
+    return [...document.querySelectorAll(`.program-export-${group}:checked`)]
+        .map(input => parseInt(input.value, 10))
+        .filter(Number.isFinite);
+}
+
+function invalidateProgramExportReport() {
+    currentProgramExportReport = null;
+    document.getElementById('program-export-results')?.classList.add('hidden');
+}
+
+function updateProgramExportSelectionState(group) {
+    const inputs = [...document.querySelectorAll(`.program-export-${group}`)];
+    const selected = inputs.filter(input => input.checked);
+    const all = document.getElementById(`program-export-${group}-all`);
+    if (all) {
+        all.checked = inputs.length > 0 && selected.length === inputs.length;
+        all.indeterminate = selected.length > 0 && selected.length < inputs.length;
+    }
+    inputs.forEach(input => input.closest('.selection-chip')?.classList.toggle('is-checked', input.checked));
+    const count = document.getElementById(`program-export-${group}-count`);
+    if (count) {
+        const noun = group === 'years' ? 'سنة' : 'برنامج';
+        count.textContent = `تم اختيار ${fmtNum(selected.length)} من ${fmtNum(inputs.length)} ${noun}`;
+    }
+    invalidateProgramExportReport();
+}
+
+function setProgramExportGroup(group, checked) {
+    document.querySelectorAll(`.program-export-${group}`).forEach(input => {
+        input.checked = checked;
+    });
+    updateProgramExportSelectionState(group);
+}
+
+function resetProgramExportSelection() {
+    const years = getAvailableYears();
+    const latestYear = years.length ? years[years.length - 1] : null;
+    document.querySelectorAll('.program-export-years').forEach(input => {
+        input.checked = parseInt(input.value, 10) === latestYear;
+    });
+    document.querySelectorAll('.program-export-programs').forEach(input => {
+        input.checked = true;
+    });
+    updateProgramExportSelectionState('years');
+    updateProgramExportSelectionState('programs');
+}
+
+function initProgramExportView() {
+    const years = getAvailableYears();
+    const latestYear = years.length ? years[years.length - 1] : null;
+    const yearsWrap = document.getElementById('program-export-years');
+    const programsWrap = document.getElementById('program-export-programs');
+    if (!yearsWrap || !programsWrap) return;
+
+    yearsWrap.innerHTML = years.map(year => `
+        <label class="selection-chip ${year === latestYear ? 'is-checked' : ''}">
+            <input class="program-export-years" type="checkbox" value="${year}" ${year === latestYear ? 'checked' : ''}>
+            <span class="selection-chip-text">
+                <span class="selection-chip-title">${fmtYear(year)}</span>
+            </span>
+        </label>
+    `).join('');
+
+    programsWrap.innerHTML = programs.map((program, index) => `
+        <label class="selection-chip is-checked">
+            <input class="program-export-programs" type="checkbox" value="${index}" checked>
+            <span class="selection-chip-text">
+                <span class="selection-chip-title">${escapeHTML(program.name)}</span>
+                <span class="selection-chip-meta">${escapeHTML(program.degree)} · ${escapeHTML(program.dept)}</span>
+            </span>
+        </label>
+    `).join('');
+
+    document.querySelectorAll('.program-export-years').forEach(input => {
+        input.addEventListener('change', () => updateProgramExportSelectionState('years'));
+    });
+    document.querySelectorAll('.program-export-programs').forEach(input => {
+        input.addEventListener('change', () => updateProgramExportSelectionState('programs'));
+    });
+    document.getElementById('program-export-years-all')?.addEventListener('change', event => {
+        setProgramExportGroup('years', event.target.checked);
+    });
+    document.getElementById('program-export-programs-all')?.addEventListener('change', event => {
+        setProgramExportGroup('programs', event.target.checked);
+    });
+    document.getElementById('program-export-reset')?.addEventListener('click', resetProgramExportSelection);
+    document.getElementById('program-export-build')?.addEventListener('click', showProgramExportReport);
+
+    updateProgramExportSelectionState('years');
+    updateProgramExportSelectionState('programs');
+}
+
+function showProgramExportReport() {
+    const years = getProgramExportCheckboxes('years');
+    const programIndexes = getProgramExportCheckboxes('programs');
+    if (!years.length) return alert('اختر سنة واحدة على الأقل.');
+    if (!programIndexes.length) return alert('اختر برنامجًا واحدًا على الأقل.');
+
+    const report = buildProgramExportReport(programs, years, programIndexes);
+    if (!report.detailRecords.length) return alert('لا توجد بيانات للسنوات والبرامج المختارة.');
+    currentProgramExportReport = report;
+    renderProgramExportReport(report);
+}
+
+function programExportDisplayCell(value) {
+    if (value == null || value === '') return '<span class="rate-na">غير متوفر</span>';
+    if (typeof value === 'number') return escapeHTML(fmtNumFlex(value, 2));
+    return escapeHTML(String(value));
+}
+
+function renderProgramExportReport(report) {
+    const yearLabel = report.years.map(fmtYear).join('، ');
+    const programLabel = report.selectedPrograms.length === programs.length
+        ? 'كل البرامج'
+        : `${fmtNum(report.selectedPrograms.length)} برامج محددة`;
+    document.getElementById('program-export-caption').textContent =
+        `السنوات: ${yearLabel} · البرامج: ${programLabel} · النطاق: جميع الفروع`;
+
+    const summary = [
+        { icon: '📅', value: fmtNum(report.years.length), label: 'سنوات مختارة' },
+        { icon: '📚', value: fmtNum(report.selectedPrograms.length), label: 'برامج مختارة' },
+        { icon: '📋', value: fmtNum(report.detailRecords.length), label: 'سجلات البرامج' },
+        { icon: '✅', value: fmtNum(report.actualIndicators), label: 'مؤشرات فعلية' },
+        { icon: '📈', value: fmtNum(report.statisticalIndicators), label: 'مؤشرات إحصائية' },
+        { icon: '—', value: fmtNum(report.unavailableIndicators), label: 'غير متوفر' },
+    ];
+    document.getElementById('program-export-summary').innerHTML = summary.map(item => `
+        <div class="summary-card">
+            <div class="sc-icon">${item.icon}</div>
+            <div class="sc-value">${item.value}</div>
+            <div class="sc-label">${item.label}</div>
+        </div>
+    `).join('');
+
+    document.getElementById('program-export-detail-thead').innerHTML =
+        `<tr>${getProgramExportDetailHeaders().map(header => `<th>${escapeHTML(header)}</th>`).join('')}</tr>`;
+    document.getElementById('program-export-detail-tbody').innerHTML = report.detailRecords.map(detail =>
+        `<tr>${PROGRAM_EXPORT_DETAIL_COLUMNS.map(column => `<td>${programExportDisplayCell(detail[column.key])}</td>`).join('')}</tr>`
+    ).join('');
+
+    document.getElementById('program-export-indicator-thead').innerHTML =
+        `<tr>${getProgramExportIndicatorHeaders().map(header => `<th>${escapeHTML(header)}</th>`).join('')}</tr>`;
+    document.getElementById('program-export-indicator-tbody').innerHTML = report.indicatorRecords.map(record => `
+        <tr>
+            <td>${escapeHTML(record.detail.year)}</td>
+            <td>${escapeHTML(record.detail.program)}</td>
+            <td>${escapeHTML(record.detail.degree)}</td>
+            <td>${escapeHTML(record.detail.department)}</td>
+            <td>${escapeHTML(record.code)}</td>
+            <td>${escapeHTML(record.indicator)}</td>
+            <td>${escapeHTML(record.displayValue)}</td>
+            <td>${escapeHTML(record.unit)}</td>
+            <td><span class="program-export-status ${record.statusKind}">${escapeHTML(record.status)}</span></td>
+            <td>${record.note ? escapeHTML(record.note) : '—'}</td>
+        </tr>
+    `).join('');
+
+    document.getElementById('program-export-results').classList.remove('hidden');
+    document.getElementById('program-export-results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function exportSelectedProgramsExcel() {
+    const report = currentProgramExportReport;
+    if (!report) return;
+    const wb = XLSX.utils.book_new();
+    const summaryRows = [
+        ['تنزيل بيانات البرامج'],
+        ['السنوات', report.years.map(fmtYear).join('، ')],
+        ['البرامج', report.selectedPrograms.length === programs.length ? 'كل البرامج' : report.selectedPrograms.map(program => `${program.name} (${program.degree})`).join('، ')],
+        ['سجلات البرامج', report.detailRecords.length],
+        ['المؤشرات الفعلية', report.actualIndicators],
+        ['المؤشرات الإحصائية', report.statisticalIndicators],
+        ['المؤشرات غير المتوفرة', report.unavailableIndicators],
+    ];
+    const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows);
+    summarySheet['!cols'] = [{ wch: 24 }, { wch: 90 }];
+    XLSX.utils.book_append_sheet(wb, summarySheet, 'الملخص');
+
+    const combinedSheet = XLSX.utils.aoa_to_sheet([
+        getProgramExportCombinedHeaders(),
+        ...report.indicatorRecords.map(getProgramExportCombinedRow),
+    ]);
+    combinedSheet['!cols'] = [
+        ...PROGRAM_EXPORT_DETAIL_COLUMNS.map(column => ({ wch: column.width })),
+        ...PROGRAM_EXPORT_INDICATOR_COLUMNS.map(column => ({ wch: column.width })),
+    ];
+    XLSX.utils.book_append_sheet(wb, combinedSheet, 'البيانات المجمعة');
+
+    const detailSheet = XLSX.utils.aoa_to_sheet([
+        getProgramExportDetailHeaders(),
+        ...report.detailRecords.map(getProgramExportDetailRow),
+    ]);
+    detailSheet['!cols'] = PROGRAM_EXPORT_DETAIL_COLUMNS.map(column => ({ wch: column.width }));
+    XLSX.utils.book_append_sheet(wb, detailSheet, 'تفاصيل البرامج');
+
+    const indicatorSheet = XLSX.utils.aoa_to_sheet([
+        getProgramExportIndicatorHeaders(),
+        ...report.indicatorRecords.map(record => getProgramExportIndicatorRow(record, true)),
+    ]);
+    indicatorSheet['!cols'] = [
+        { wch: 11 }, { wch: 30 }, { wch: 16 }, { wch: 22 },
+        ...PROGRAM_EXPORT_INDICATOR_COLUMNS.map(column => ({ wch: column.width })),
+    ];
+    XLSX.utils.book_append_sheet(wb, indicatorSheet, 'المؤشرات');
+    XLSX.writeFile(wb, `${report.filenameBase}.xlsx`);
+}
+
+function exportSelectedProgramsCSV() {
+    const report = currentProgramExportReport;
+    if (!report) return;
+    downloadCSV(`${report.filenameBase}.csv`, [
+        getProgramExportCombinedHeaders(),
+        ...report.indicatorRecords.map(getProgramExportCombinedRow),
+    ]);
 }
 
 // ========================================

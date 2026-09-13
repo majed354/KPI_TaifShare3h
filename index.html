@@ -12,7 +12,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <link rel="stylesheet" href="css/style.css?v=20260913-statistical47c">
+    <link rel="stylesheet" href="css/style.css?v=20260913-program-export1">
 </head>
 <body>
 <div id="loginOverlay" class="login-overlay">
@@ -69,6 +69,7 @@
             <button class="nav-btn active" data-view="dashboard">لوحة المعلومات</button>
             <button class="nav-btn" data-view="program">تفاصيل البرنامج</button>
             <button class="nav-btn" data-view="compare">المقارنة</button>
+            <button class="nav-btn" data-view="program-export">تنزيل بيانات البرامج</button>
             <button class="nav-btn" data-view="faculty">هيئة التدريس</button>
             <button class="nav-btn" data-view="entrants">سجل المستجدين</button>
             <button class="nav-btn" data-view="graduates">سجل الخريجين</button>
@@ -287,6 +288,97 @@
                     <div class="chart-wrap"><canvas id="chart-compare"></canvas></div>
                 </div>
             </div>
+        </div>
+    </section>
+
+    <!-- ============ تنزيل بيانات البرامج ============ -->
+    <section id="program-export-view" class="view">
+        <div class="view-top">
+            <div>
+                <h2>تنزيل بيانات البرامج</h2>
+                <p class="view-desc">اختر سنة واحدة أو عدة سنوات، ثم حدد البرامج المطلوبة أو اختر الكل.</p>
+            </div>
+        </div>
+
+        <div class="card program-export-builder">
+            <div class="program-export-selection">
+                <section class="program-export-pick" aria-labelledby="program-export-years-title">
+                    <div class="program-export-pick-head">
+                        <div>
+                            <h3 id="program-export-years-title">السنوات</h3>
+                            <p>يمكن اختيار سنة واحدة أو أكثر.</p>
+                        </div>
+                        <label class="selection-all">
+                            <input id="program-export-years-all" type="checkbox">
+                            <span>كل السنوات</span>
+                        </label>
+                    </div>
+                    <div id="program-export-years" class="selection-grid years"></div>
+                    <p id="program-export-years-count" class="selection-count"></p>
+                </section>
+
+                <section class="program-export-pick" aria-labelledby="program-export-programs-title">
+                    <div class="program-export-pick-head">
+                        <div>
+                            <h3 id="program-export-programs-title">البرامج</h3>
+                            <p>الاختيار الافتراضي يشمل جميع البرامج.</p>
+                        </div>
+                        <label class="selection-all">
+                            <input id="program-export-programs-all" type="checkbox" checked>
+                            <span>كل البرامج</span>
+                        </label>
+                    </div>
+                    <div id="program-export-programs" class="selection-grid programs"></div>
+                    <p id="program-export-programs-count" class="selection-count"></p>
+                </section>
+            </div>
+
+            <div class="program-export-actions">
+                <button id="program-export-build" class="btn-primary" type="button">عرض البيانات</button>
+                <button id="program-export-reset" class="btn-sm" type="button">إعادة الضبط</button>
+            </div>
+        </div>
+
+        <div id="program-export-results" class="hidden">
+            <div class="card">
+                <div class="cmp-header">
+                    <div>
+                        <h3>البيانات المختارة</h3>
+                        <p id="program-export-caption" class="view-desc"></p>
+                    </div>
+                    <div class="export-btns">
+                        <button class="btn-sm" onclick="exportSelectedProgramsExcel()">تنزيل Excel</button>
+                        <button class="btn-sm" onclick="exportSelectedProgramsCSV()">تنزيل CSV</button>
+                    </div>
+                </div>
+                <div id="program-export-summary" class="summary-row program-export-summary"></div>
+            </div>
+
+            <details class="card program-export-preview" open>
+                <summary>
+                    <span>تفاصيل البرامج</span>
+                    <small>سجل واحد لكل برنامج وسنة</small>
+                </summary>
+                <div class="table-wrap program-export-table-wrap">
+                    <table class="data-table program-export-table">
+                        <thead id="program-export-detail-thead"></thead>
+                        <tbody id="program-export-detail-tbody"></tbody>
+                    </table>
+                </div>
+            </details>
+
+            <details class="card program-export-preview" open>
+                <summary>
+                    <span>جميع مؤشرات الأداء</span>
+                    <small>قيمة المؤشر وحالته وملاحظة مصدره</small>
+                </summary>
+                <div class="table-wrap program-export-table-wrap indicators">
+                    <table class="data-table program-export-table">
+                        <thead id="program-export-indicator-thead"></thead>
+                        <tbody id="program-export-indicator-tbody"></tbody>
+                    </table>
+                </div>
+            </details>
         </div>
     </section>
 
@@ -786,6 +878,6 @@ window.KPI_CONFIG = {
     shari3ahCourseEvaluationsDataUrl: 'https://raw.githubusercontent.com/majed354/Shari3ahSurveys/main/js/course-evaluations-data.js'
 };
 </script>
-<script src="js/app.js?v=20260913-statistical47c"></script>
+<script src="js/app.js?v=20260913-program-export1"></script>
 </body>
 </html>

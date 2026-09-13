@@ -845,6 +845,188 @@ body.app-blocked { overflow: hidden; }
 .diff-same { color: var(--text-light); }
 
 /* ============================
+   تنزيل بيانات البرامج
+   ============================ */
+.program-export-builder {
+    margin-bottom: 16px;
+}
+.program-export-selection {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.72fr) minmax(420px, 1.28fr);
+    gap: 16px;
+}
+.program-export-pick {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fbfcfe;
+    padding: 16px;
+}
+.program-export-pick-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.program-export-pick-head h3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+    color: var(--primary-dark);
+    font-size: 1rem;
+}
+.program-export-pick-head p {
+    margin-top: 3px;
+    color: var(--text-light);
+    font-size: 0.78rem;
+}
+.selection-all,
+.selection-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+.selection-all {
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    border: 1px solid rgba(13,110,110,0.25);
+    padding: 6px 10px;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+.selection-all input,
+.selection-chip input {
+    width: 17px;
+    height: 17px;
+    accent-color: var(--primary);
+    flex-shrink: 0;
+}
+.selection-grid {
+    display: grid;
+    gap: 8px;
+}
+.selection-grid.years {
+    grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+}
+.selection-grid.programs {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    max-height: 310px;
+    overflow-y: auto;
+    padding-left: 4px;
+}
+.selection-chip {
+    padding: 10px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+.selection-chip:hover {
+    border-color: rgba(13,110,110,0.35);
+}
+.selection-chip.is-checked {
+    border-color: rgba(13,110,110,0.45);
+    background: var(--primary-light);
+    box-shadow: 0 4px 12px rgba(13,110,110,0.07);
+}
+.selection-chip-text {
+    min-width: 0;
+}
+.selection-chip-title {
+    display: block;
+    color: var(--text);
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
+.selection-chip-meta {
+    display: block;
+    color: var(--text-light);
+    font-size: 0.7rem;
+    margin-top: 2px;
+}
+.selection-count {
+    min-height: 20px;
+    margin-top: 10px;
+    color: var(--text-light);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.program-export-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+}
+.program-export-summary {
+    margin-top: 16px;
+    margin-bottom: 0;
+}
+.program-export-summary .summary-card {
+    text-align: right;
+}
+.program-export-preview {
+    margin-top: 16px;
+}
+.program-export-preview summary {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+    color: var(--primary-dark);
+    font-weight: 800;
+}
+.program-export-preview summary small {
+    color: var(--text-light);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+.program-export-table-wrap {
+    max-height: 430px;
+    overflow: auto;
+    margin-top: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+.program-export-table-wrap.indicators {
+    max-height: 560px;
+}
+.program-export-table {
+    min-width: max-content;
+}
+.program-export-table th {
+    z-index: 1;
+}
+.program-export-status {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+.program-export-status.actual {
+    color: #065f46;
+    background: #d1fae5;
+}
+.program-export-status.sample {
+    color: #92400e;
+    background: #fef3c7;
+}
+.program-export-status.statistical {
+    color: #1e40af;
+    background: #dbeafe;
+}
+.program-export-status.unavailable {
+    color: #64748b;
+    background: #f1f5f9;
+}
+
+/* ============================
    الاستوديو الإحصائي
    ============================ */
 .analytics-builder {
@@ -950,6 +1132,15 @@ body.app-blocked { overflow: hidden; }
     color: var(--text-light);
     padding: 30px 14px;
     font-size: 0.92rem;
+}
+
+@media (max-width: 850px) {
+    .program-export-selection {
+        grid-template-columns: 1fr;
+    }
+    .program-export-pick-head {
+        flex-direction: column;
+    }
 }
 
 /* ============================
